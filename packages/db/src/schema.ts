@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   date,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -180,6 +181,8 @@ export const addresses = pgTable(
     region: text('region').notNull().default(''),
     postalCode: text('postal_code').notNull().default(''),
     country: text('country').notNull().default(''),
+    latitude: doublePrecision('latitude'),
+    longitude: doublePrecision('longitude'),
     sortOrder: integer('sort_order').notNull().default(0),
   },
   (table) => [index('addresses_contact_idx').on(table.contactId)],
@@ -257,6 +260,26 @@ export const organizationMemberships = pgTable(
   (table) => [uniqueIndex('org_membership_idx').on(table.organizationId, table.contactId)],
 )
 
+export const relationshipTypes = pgTable(
+  'relationship_types',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    label: text('label').notNull(),
+    reciprocalLabel: text('reciprocal_label').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('relationship_types_pair_idx').on(
+      table.workspaceId,
+      sql`least(lower(${table.label}), lower(${table.reciprocalLabel}))`,
+      sql`greatest(lower(${table.label}), lower(${table.reciprocalLabel}))`,
+    ),
+  ],
+)
+
 export const relationships = pgTable(
   'relationships',
   {
@@ -264,6 +287,7 @@ export const relationships = pgTable(
     workspaceId: uuid('workspace_id')
       .notNull()
       .references(() => workspaces.id, { onDelete: 'cascade' }),
+    relationshipTypeId: uuid('relationship_type_id').references(() => relationshipTypes.id, { onDelete: 'set null' }),
     fromContactId: uuid('from_contact_id')
       .notNull()
       .references(() => contacts.id, { onDelete: 'cascade' }),

@@ -4,11 +4,10 @@ import {
   contacts,
   customFieldDefinitions,
   customFieldValues,
-  householdMembers,
-  households,
   notes,
   organizationMemberships,
   organizations,
+  relationshipTypes,
   relationships,
   reminders,
   tasks,
@@ -16,7 +15,7 @@ import {
 } from '@rolodex/db'
 import { and, asc, desc, eq, inArray, isNull, lte, or } from 'drizzle-orm'
 import type { z } from 'zod'
-import { requireMembership, requireWriter, type Db } from './access'
+import { requireManager, requireMembership, requireWriter, type Db } from './access'
 import { getContact } from './contacts'
 import { AppError } from './errors'
 import { organizationLogoUrl } from './organization-logo'
@@ -24,12 +23,11 @@ import {
   activitySchema,
   customFieldSchema,
   customValueSchema,
-  householdMemberSchema,
-  householdSchema,
   noteSchema,
   organizationMemberSchema,
   organizationSchema,
   relationshipSchema,
+  relationshipTypeSchema,
   reminderSchema,
   taskSchema,
 } from './validation'
@@ -62,6 +60,24 @@ function reciprocal(type: string) {
   return reverseType[type.toLowerCase()] ?? type
 }
 
+const defaultRelationshipTypes = [
+  ['spouse', 'spouse'],
+  ['parent', 'child'],
+  ['grandparent', 'grandchild'],
+  ['boyfriend/girlfriend', 'boyfriend/girlfriend'],
+  ['coworker', 'coworker'],
+  ['friend', 'friend'],
+] as const
+
+const cadenceDays: Record<string, { days: number; label: string }> = {
+  '7': { days: 7, label: 'every week' },
+  '14': { days: 14, label: 'every 2 weeks' },
+  '30': { days: 30, label: 'every month' },
+  '90': { days: 90, label: 'every quarter' },
+  '180': { days: 180, label: 'every 6 months' },
+  '365': { days: 365, label: 'every year' },
+}
+
 async function writer(db: Db, userId: string, workspaceId: string) {
   await requireWriter(db, userId, workspaceId)
 }
@@ -92,38 +108,75 @@ export async function listRelationships(db: Database, userId: string, workspaceI
   return rows
 }
 
+export async function listRelationshipTypes(db: Database, userId: string, workspaceId: string) {
+  await reader(db, userId, workspaceId)
+  let rows = await db.select().from(relationshipTypes).where(eq(relationshipTypes.workspaceId, workspaceId)).orderBy(asc(relationshipTypes.label))
+  if (!rows.length) {
+    await db
+      .insert(relationshipTypes)
+      .values(defaultRelationshipTypes.map(([label, reciprocalLabel]) => ({ workspaceId, label, reciprocalLabel })))
+      .onConflictDoNothing()
+    rows = await db.select().from(relationshipTypes).where(eq(relationshipTypes.workspaceId, workspaceId)).orderBy(asc(relationshipTypes.label))
+  }
+  return rows.map(presentRelationshipType)
+}
+
+export async function createRelationshipType(db: Database, userId: string, workspaceId: string, input: z.infer<typeof relationshipTypeSchema>) {
+  await requireManager(db, userId, workspaceId)
+  const label = input.label.trim()
+  const reciprocalLabel = input.reciprocalLabel.trim()
+  const rows = await db.select().from(relationshipTypes).where(eq(relationshipTypes.workspaceId, workspaceId))
+  const used = new Set(rows.flatMap((row) => [row.label.toLowerCase(), row.reciprocalLabel.toLowerCase()]))
+  if (used.has(label.toLowerCase()) || used.has(reciprocalLabel.toLowerCase())) throw new AppError(409, 'That side is already used by another relationship')
+  const [row] = await db.insert(relationshipTypes).values({ workspaceId, label, reciprocalLabel }).returning()
+  return presentRelationshipType(row!)
+}
+
+export async function deleteRelationshipType(db: Database, userId: string, workspaceId: string, typeId: string) {
+  await requireManager(db, userId, workspaceId)
+  const [row] = await db.delete(relationshipTypes).where(and(eq(relationshipTypes.id, typeId), eq(relationshipTypes.workspaceId, workspaceId))).returning()
+  if (!row) throw new AppError(404, 'Relationship not found')
+}
+
 export async function createRelationship(db: Database, userId: string, workspaceId: string, contactId: string, input: z.infer<typeof relationshipSchema>) {
   await writer(db, userId, workspaceId)
   if (input.toContactId === contactId) throw new AppError(400, 'Choose a different person')
   await getContact(db, userId, workspaceId, contactId)
   await getContact(db, userId, workspaceId, input.toContactId)
-  const back = reciprocal(input.type)
+  const [definition] = await db
+    .select()
+    .from(relationshipTypes)
+    .where(and(eq(relationshipTypes.id, input.typeId), eq(relationshipTypes.workspaceId, workspaceId)))
+    .limit(1)
+  if (!definition) throw new AppError(404, 'Choose a relationship defined in Admin')
+  const type = input.side === 'label' ? definition.label : definition.reciprocalLabel
+  const back = input.side === 'label' ? definition.reciprocalLabel : definition.label
   const existing = await db
     .select({ id: relationships.id })
     .from(relationships)
-    .where(and(eq(relationships.fromContactId, contactId), eq(relationships.toContactId, input.toContactId), eq(relationships.type, input.type)))
+    .where(and(eq(relationships.fromContactId, contactId), eq(relationships.toContactId, input.toContactId), eq(relationships.type, type)))
     .limit(1)
   if (existing.length) throw new AppError(409, 'That relationship already exists')
   const [row] = await db
     .insert(relationships)
     .values({
       workspaceId,
+      relationshipTypeId: definition.id,
       fromContactId: contactId,
       toContactId: input.toContactId,
-      category: input.category,
-      type: input.type,
+      category: 'custom',
+      type,
       reciprocalType: back,
-      description: input.description ?? null,
     })
     .returning()
   await db.insert(relationships).values({
     workspaceId,
+    relationshipTypeId: definition.id,
     fromContactId: input.toContactId,
     toContactId: contactId,
-    category: input.category,
+    category: 'custom',
     type: back,
-    reciprocalType: input.type,
-    description: input.description ?? null,
+    reciprocalType: type,
   })
   return row
 }
@@ -140,68 +193,6 @@ export async function deleteRelationship(db: Database, userId: string, workspace
         and(eq(relationships.fromContactId, row.toContactId), eq(relationships.toContactId, row.fromContactId), eq(relationships.type, row.reciprocalType ?? reciprocal(row.type))),
       ),
     )
-}
-
-export async function listHouseholds(db: Database, userId: string, workspaceId: string) {
-  await reader(db, userId, workspaceId)
-  const rows = await db.select().from(households).where(and(eq(households.workspaceId, workspaceId), isNull(households.deletedAt))).orderBy(asc(households.name))
-  const members = rows.length
-    ? await db
-        .select({ householdId: householdMembers.householdId, contactId: contacts.id, displayName: contacts.displayName, role: householdMembers.role })
-        .from(householdMembers)
-        .innerJoin(contacts, eq(contacts.id, householdMembers.contactId))
-        .where(and(inArray(householdMembers.householdId, rows.map((row) => row.id)), isNull(contacts.deletedAt)))
-    : []
-  return rows.map((row) => ({
-    ...presentHousehold(row),
-    members: members.filter((member) => member.householdId === row.id).map(({ householdId: _id, ...member }) => member),
-  }))
-}
-
-export async function createHousehold(db: Database, userId: string, workspaceId: string, input: z.infer<typeof householdSchema>) {
-  await writer(db, userId, workspaceId)
-  const [row] = await db.insert(households).values({ workspaceId, name: input.name.trim(), street: input.street ?? null, city: input.city ?? null, region: input.region ?? null, postalCode: input.postalCode ?? null, country: input.country ?? null }).returning()
-  return presentHousehold(row!)
-}
-
-export async function updateHousehold(db: Database, userId: string, workspaceId: string, householdId: string, input: z.infer<typeof householdSchema>) {
-  await writer(db, userId, workspaceId)
-  const [row] = await db
-    .update(households)
-    .set({ name: input.name.trim(), street: input.street ?? null, city: input.city ?? null, region: input.region ?? null, postalCode: input.postalCode ?? null, country: input.country ?? null, updatedAt: new Date() })
-    .where(and(eq(households.id, householdId), eq(households.workspaceId, workspaceId), isNull(households.deletedAt)))
-    .returning()
-  if (!row) throw new AppError(404, 'Household not found')
-  return presentHousehold(row)
-}
-
-export async function deleteHousehold(db: Database, userId: string, workspaceId: string, householdId: string) {
-  await writer(db, userId, workspaceId)
-  const [row] = await db.update(households).set({ deletedAt: new Date(), updatedAt: new Date() }).where(and(eq(households.id, householdId), eq(households.workspaceId, workspaceId))).returning()
-  if (!row) throw new AppError(404, 'Household not found')
-}
-
-export async function addHouseholdMember(db: Database, userId: string, workspaceId: string, householdId: string, input: z.infer<typeof householdMemberSchema>) {
-  await writer(db, userId, workspaceId)
-  await assertHousehold(db, workspaceId, householdId)
-  await getContact(db, userId, workspaceId, input.contactId)
-  await db.insert(householdMembers).values({ householdId, contactId: input.contactId, role: input.role ?? null }).onConflictDoNothing()
-  return { ok: true }
-}
-
-export async function removeHouseholdMember(db: Database, userId: string, workspaceId: string, householdId: string, contactId: string) {
-  await writer(db, userId, workspaceId)
-  await assertHousehold(db, workspaceId, householdId)
-  await db.delete(householdMembers).where(and(eq(householdMembers.householdId, householdId), eq(householdMembers.contactId, contactId)))
-}
-
-export async function contactHouseholds(db: Database, userId: string, workspaceId: string, contactId: string) {
-  await getContact(db, userId, workspaceId, contactId)
-  return db
-    .select({ id: households.id, name: households.name, role: householdMembers.role, city: households.city })
-    .from(householdMembers)
-    .innerJoin(households, eq(households.id, householdMembers.householdId))
-    .where(and(eq(householdMembers.contactId, contactId), eq(households.workspaceId, workspaceId), isNull(households.deletedAt)))
 }
 
 export async function listOrganizations(db: Database, userId: string, workspaceId: string) {
@@ -277,21 +268,12 @@ export async function listNotes(db: Database, userId: string, workspaceId: strin
   return rows.filter((row) => visible(userId, row.visibility, row.authorId)).map(presentNote)
 }
 
-export async function listHouseholdNotes(db: Database, userId: string, workspaceId: string, householdId: string) {
-  await reader(db, userId, workspaceId)
-  await assertHousehold(db, workspaceId, householdId)
-  const rows = await db.select().from(notes).where(and(eq(notes.householdId, householdId), eq(notes.workspaceId, workspaceId), isNull(notes.deletedAt))).orderBy(desc(notes.createdAt))
-  return rows.filter((row) => visible(userId, row.visibility, row.authorId)).map(presentNote)
-}
-
 export async function createNote(db: Database, userId: string, workspaceId: string, input: z.infer<typeof noteSchema>) {
   await writer(db, userId, workspaceId)
-  if (!input.contactId && !input.householdId) throw new AppError(400, 'Choose a person or a household')
-  if (input.contactId) await getContact(db, userId, workspaceId, input.contactId)
-  if (input.householdId) await assertHousehold(db, workspaceId, input.householdId)
+  await getContact(db, userId, workspaceId, input.contactId)
   const [row] = await db
     .insert(notes)
-    .values({ workspaceId, contactId: input.contactId ?? null, householdId: input.householdId ?? null, authorId: userId, body: input.body.trim(), visibility: input.visibility ?? 'private' })
+    .values({ workspaceId, contactId: input.contactId, authorId: userId, body: input.body.trim(), visibility: input.visibility ?? 'private' })
     .returning()
   return presentNote(row!)
 }
@@ -342,6 +324,15 @@ export async function createActivity(db: Database, userId: string, workspaceId: 
     })
     .returning()
   await db.insert(activityContacts).values(input.contactIds.map((contactId) => ({ activityId: row!.id, contactId })))
+  const touched = await db
+    .select({ id: contacts.id, lastInteractionAt: contacts.lastInteractionAt })
+    .from(contacts)
+    .where(inArray(contacts.id, input.contactIds))
+  for (const person of touched) {
+    if (!person.lastInteractionAt || person.lastInteractionAt < occurredAt) {
+      await db.update(contacts).set({ lastInteractionAt: occurredAt }).where(eq(contacts.id, person.id))
+    }
+  }
   const [presented] = await attachActivityPeople(db, [row!])
   return presented
 }
@@ -349,7 +340,7 @@ export async function createActivity(db: Database, userId: string, workspaceId: 
 export async function deleteActivity(db: Database, userId: string, workspaceId: string, activityId: string) {
   await writer(db, userId, workspaceId)
   const [row] = await db.select().from(activities).where(and(eq(activities.id, activityId), eq(activities.workspaceId, workspaceId), isNull(activities.deletedAt))).limit(1)
-  if (!row || !visible(userId, row.visibility, row.createdBy)) throw new AppError(404, 'Activity not found')
+  if (!row || !visible(userId, row.visibility, row.createdBy)) throw new AppError(404, 'Interaction not found')
   await db.update(activities).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(activities.id, row.id))
 }
 
@@ -455,7 +446,14 @@ export async function setCustomValue(db: Database, userId: string, workspaceId: 
 export async function agenda(db: Database, userId: string, workspaceId: string) {
   await reader(db, userId, workspaceId)
   const people = await db
-    .select({ id: contacts.id, displayName: contacts.displayName, birthday: contacts.birthday, anniversary: contacts.anniversary })
+    .select({
+      id: contacts.id,
+      displayName: contacts.displayName,
+      birthday: contacts.birthday,
+      anniversary: contacts.anniversary,
+      followUpFrequency: contacts.followUpFrequency,
+      lastInteractionAt: contacts.lastInteractionAt,
+    })
     .from(contacts)
     .where(and(eq(contacts.workspaceId, workspaceId), isNull(contacts.deletedAt)))
   const dates = []
@@ -482,10 +480,25 @@ export async function agenda(db: Database, userId: string, workspaceId: string) 
     .where(and(eq(reminders.workspaceId, workspaceId), isNull(reminders.completedAt), lte(reminders.remindAt, soon), or(isNull(reminders.snoozedUntil), lte(reminders.snoozedUntil, new Date()))))
     .orderBy(asc(reminders.remindAt))
     .limit(20)
+  const reachOuts = []
+  for (const person of people) {
+    const cadence = person.followUpFrequency ? cadenceDays[person.followUpFrequency] : undefined
+    if (!cadence) continue
+    const daysSince = person.lastInteractionAt ? Math.floor((Date.now() - person.lastInteractionAt.getTime()) / 86_400_000) : null
+    if (daysSince !== null && daysSince < cadence.days) continue
+    reachOuts.push({
+      contactId: person.id,
+      displayName: person.displayName,
+      daysSince,
+      label: daysSince === null ? `Reach out to ${person.displayName} · ${cadence.label}` : `Reach out to ${person.displayName} · ${daysSince} days since you last spoke`,
+    })
+  }
+  reachOuts.sort((left, right) => (right.daysSince ?? 10_000) - (left.daysSince ?? 10_000))
   return {
     dates,
     tasks: openTasks.map(presentTask),
     reminders: upcoming.map((row) => ({ id: row.id, type: row.type, remindAt: row.remindAt.toISOString(), contactId: row.contactId })),
+    reachOuts: reachOuts.slice(0, 20),
   }
 }
 
@@ -519,8 +532,8 @@ async function attachActivityPeople(db: Database, rows: Array<typeof activities.
   }))
 }
 
-function presentHousehold(row: typeof households.$inferSelect) {
-  return { id: row.id, name: row.name, street: row.street, city: row.city, region: row.region, postalCode: row.postalCode, country: row.country }
+function presentRelationshipType(row: typeof relationshipTypes.$inferSelect) {
+  return { id: row.id, label: row.label, reciprocalLabel: row.reciprocalLabel }
 }
 
 function presentOrganization(row: typeof organizations.$inferSelect) {
@@ -558,7 +571,21 @@ function patchOrg(input: z.infer<typeof organizationSchema>) {
 }
 
 function presentNote(row: typeof notes.$inferSelect) {
-  return { id: row.id, body: row.body, visibility: row.visibility, authorId: row.authorId, createdAt: row.createdAt.toISOString() }
+  return { id: row.id, body: row.body, visibility: row.visibility, authorId: row.authorId, contactId: row.contactId, createdAt: row.createdAt.toISOString() }
+}
+
+export async function listWorkspaceNotes(db: Database, userId: string, workspaceId: string) {
+  await reader(db, userId, workspaceId)
+  const rows = await db
+    .select({ note: notes, contactName: contacts.displayName })
+    .from(notes)
+    .leftJoin(contacts, eq(contacts.id, notes.contactId))
+    .where(and(eq(notes.workspaceId, workspaceId), isNull(notes.deletedAt)))
+    .orderBy(desc(notes.createdAt))
+    .limit(100)
+  return rows
+    .filter((row) => visible(userId, row.note.visibility, row.note.authorId))
+    .map((row) => ({ ...presentNote(row.note), contactName: row.contactName }))
 }
 
 function presentTask(row: typeof tasks.$inferSelect) {
@@ -579,11 +606,6 @@ function orgValues(input: z.infer<typeof organizationSchema>) {
     country: input.country ?? null,
     notes: input.notes ?? null,
   }
-}
-
-async function assertHousehold(db: Database, workspaceId: string, householdId: string) {
-  const [row] = await db.select({ id: households.id }).from(households).where(and(eq(households.id, householdId), eq(households.workspaceId, workspaceId), isNull(households.deletedAt))).limit(1)
-  if (!row) throw new AppError(404, 'Household not found')
 }
 
 async function assertOrganization(db: Database, workspaceId: string, organizationId: string) {

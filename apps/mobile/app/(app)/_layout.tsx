@@ -7,9 +7,8 @@ import { font, theme } from '../../src/theme'
 
 const links = [
   { href: '/', label: 'Contacts' },
-  { href: '/households', label: 'Households' },
   { href: '/organizations', label: 'Organizations' },
-  { href: '/activity', label: 'Activity' },
+  { href: '/interactions', label: 'Interactions' },
   { href: '/tasks', label: 'Tasks' },
   { href: '/books', label: 'Address books' },
   { href: '/members', label: 'Members' },

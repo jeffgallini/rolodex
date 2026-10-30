@@ -111,6 +111,13 @@ export async function listContacts(
         .innerJoin(addressBooks, eq(addressBooks.id, contactResources.addressBookId))
         .where(and(inArray(contactResources.contactId, ids), isNull(contactResources.deletedAt), isNull(addressBooks.deletedAt)))
     : []
+  const addressRows = ids.length
+    ? await db.select().from(addresses).where(inArray(addresses.contactId, ids)).orderBy(asc(addresses.sortOrder))
+    : []
+  const firstAddress = new Map<string, (typeof addressRows)[number]>()
+  for (const address of addressRows) {
+    if (!firstAddress.has(address.contactId)) firstAddress.set(address.contactId, address)
+  }
   return {
     total: countRow?.total ?? 0,
     contacts: rows.map((row) => {
@@ -127,11 +134,27 @@ export async function listContacts(
         primaryPhone: phone?.value ?? null,
         updatedAt: row.updatedAt.toISOString(),
         hasPhoto: Boolean(row.photoAttachmentId),
+        street: firstAddress.get(row.id)?.street || null,
+        city: firstAddress.get(row.id)?.city || null,
+        region: firstAddress.get(row.id)?.region || null,
+        postalCode: firstAddress.get(row.id)?.postalCode || null,
+        country: firstAddress.get(row.id)?.country || null,
+        lat: firstAddress.get(row.id)?.latitude ?? null,
+        lon: firstAddress.get(row.id)?.longitude ?? null,
         tags: tagRows.filter((tag) => tag.contactId === row.id).map((tag) => ({ id: tag.id, name: tag.name })),
         addressBooks: bookRows.filter((book) => book.contactId === row.id).map((book) => ({ id: book.id, name: book.name })),
       }
     }),
   }
+}
+
+export async function locateContact(db: Database, userId: string, workspaceId: string, contactId: string, lat: number, lon: number) {
+  await requireWriter(db, userId, workspaceId)
+  await getContact(db, userId, workspaceId, contactId)
+  const [address] = await db.select().from(addresses).where(eq(addresses.contactId, contactId)).orderBy(asc(addresses.sortOrder)).limit(1)
+  if (!address) throw new AppError(404, 'This contact has no address')
+  await db.update(addresses).set({ latitude: lat, longitude: lon }).where(eq(addresses.id, address.id))
+  return { ok: true }
 }
 
 export async function getContact(db: Database, userId: string, workspaceId: string, contactId: string) {
@@ -669,6 +692,8 @@ async function replaceAddresses(db: Db, contactId: string, rows: NonNullable<Con
       region: row.region?.trim() || '',
       postalCode: row.postalCode?.trim() || '',
       country: row.country?.trim() || '',
+      latitude: row.lat ?? null,
+      longitude: row.lon ?? null,
       sortOrder: index,
     })),
   )
@@ -789,6 +814,7 @@ function presentContact(bundle: Bundle) {
     personalDetails: contact.personalDetails,
     professionalBackground: contact.professionalBackground,
     followUpFrequency: contact.followUpFrequency,
+    lastInteractionAt: contact.lastInteractionAt?.toISOString() ?? null,
     hasPhoto: Boolean(contact.photoAttachmentId),
     photoAttachmentId: contact.photoAttachmentId,
     addressBookId: book?.id ?? null,
@@ -814,6 +840,8 @@ function presentContact(bundle: Bundle) {
       region: row.region,
       postalCode: row.postalCode,
       country: row.country,
+      lat: row.latitude,
+      lon: row.longitude,
     })),
     tags: tagRows,
   }

@@ -5,6 +5,7 @@ export { registerUser, loginUser, logoutUser, userForSession, createAppPassword,
 export { createWorkspace, listWorkspaces, listMembers, addMember, updateMemberRole, removeMember } from './workspaces'
 export {
   listContacts,
+  locateContact,
   getContact,
   createContact,
   updateContact,
@@ -36,17 +37,30 @@ export {
 export { searchPlaces, placeDetails, reversePlace, placeProviders, type PlaceSuggestion, type MapProvider } from './places'
 export { getMapSettings, updateMapSettings, searchWorkspacePlaces, workspacePlaceDetails, reverseWorkspacePlace, type MapSettings, type MapEngine } from './maps'
 export { organizationLogoUrl, websiteDomain } from './organization-logo'
+export { listAddons, setAddon, addonEnabled, addonCatalog, type AddonId } from './addons'
+export {
+  listImmichInstances,
+  saveImmichInstance,
+  deleteImmichInstance,
+  testImmichConnection,
+  syncWorkspaceImmich,
+  syncDueImmich,
+  searchImmichPeople,
+  contactImmich,
+  linkImmichPerson,
+  unlinkImmichPerson,
+  readImmichImage,
+  readImmichProfileImage,
+  attachImmichAsset,
+  detachImmichAsset,
+} from './immich'
 export {
   listRelationships,
+  listRelationshipTypes,
+  createRelationshipType,
+  deleteRelationshipType,
   createRelationship,
   deleteRelationship,
-  listHouseholds,
-  createHousehold,
-  updateHousehold,
-  deleteHousehold,
-  addHouseholdMember,
-  removeHouseholdMember,
-  contactHouseholds,
   listOrganizations,
   createOrganization,
   updateOrganization,
@@ -56,7 +70,7 @@ export {
   organizationMembers,
   contactOrganizations,
   listNotes,
-  listHouseholdNotes,
+  listWorkspaceNotes,
   createNote,
   deleteNote,
   listActivities,
@@ -72,7 +86,7 @@ export {
   setCustomValue,
   agenda,
 } from './crm'
-export { parseBody, registerSchema, loginSchema, workspaceSchema, memberSchema, memberRoleSchema, addressBookSchema, tagSchema, contactSchema, importSchema, appPasswordSchema, relationshipSchema, householdSchema, householdMemberSchema, organizationSchema, organizationMemberSchema, noteSchema, activitySchema, taskSchema, reminderSchema, completeSchema, customFieldSchema, customValueSchema, mapSettingsSchema } from './validation'
+export { parseBody, registerSchema, loginSchema, workspaceSchema, memberSchema, memberRoleSchema, addressBookSchema, tagSchema, contactSchema, importSchema, appPasswordSchema, relationshipSchema, relationshipTypeSchema, organizationSchema, organizationMemberSchema, noteSchema, activitySchema, taskSchema, reminderSchema, completeSchema, customFieldSchema, customValueSchema, mapSettingsSchema, addressLocationSchema, addonSchema, immichInstanceSchema, immichTestSchema, immichLinkSchema, immichPhotoSchema, immichAssetSchema } from './validation'
 export { parseVcards, serializeVcard } from './vcard'
 export { createRateLimiter } from './rate-limit'
 export { loadEnv } from './env'

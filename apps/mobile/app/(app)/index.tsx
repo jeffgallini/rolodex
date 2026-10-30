@@ -1,7 +1,10 @@
 import { useRouter } from 'expo-router'
 import { useEffect, useState } from 'react'
-import { Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native'
+import { Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native'
 import { api, type AddressBook, type Agenda, type ContactSummary } from '../../src/api'
+import { ContactsMap } from '../../src/contacts-map'
+import { ContactsTable } from '../../src/contacts-table'
+import { AuthImage } from '../../src/immich-photos'
 import { AgendaStrip } from '../../src/agenda'
 import { useAuth } from '../../src/auth'
 import { Loader } from '../../src/logo'
@@ -21,6 +24,19 @@ export default function Contacts() {
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [agenda, setAgenda] = useState<Agenda | null>(null)
+  const [view, setView] = useState<'card' | 'table' | 'map'>('card')
+  const canWrite = workspace?.role === 'owner' || workspace?.role === 'administrator' || workspace?.role === 'editor'
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return
+    const saved = sessionStorage.getItem('rolodex.contacts.view')
+    if (saved === 'card' || saved === 'table' || saved === 'map') setView(saved)
+  }, [])
+
+  function chooseView(next: 'card' | 'table' | 'map') {
+    setView(next)
+    if (Platform.OS === 'web') sessionStorage.setItem('rolodex.contacts.view', next)
+  }
 
   useEffect(() => {
     if (!workspace) return
@@ -40,6 +56,7 @@ export default function Contacts() {
     const handle = setTimeout(() => {
       const scope = selectedBook?.workspaceId ?? workspace.id
       const params = new URLSearchParams()
+      params.set('limit', '200')
       if (q.trim()) params.set('q', q.trim())
       if (selectedBook) params.set('addressBookId', selectedBook.id)
       const queryText = params.toString()
@@ -65,7 +82,16 @@ export default function Contacts() {
           <Text style={styles.title}>Contacts</Text>
           <Text style={styles.meta}>{visible.length} {visible.length === 1 ? 'person' : 'people'}</Text>
         </View>
-        <Button label="New contact" onPress={() => router.push('/contacts/new')} />
+        <View style={styles.headerActions}>
+          <View style={styles.filters}>
+            {(['card', 'table', 'map'] as const).map((item) => (
+              <Pressable key={item} onPress={() => chooseView(item)} style={[styles.filter, view === item && styles.filterActive]}>
+                <Text style={[styles.filterText, view === item && styles.filterTextActive]}>{item[0]!.toUpperCase() + item.slice(1)}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Button label="New contact" onPress={() => router.push('/contacts/new')} />
+        </View>
       </View>
       <AgendaStrip agenda={agenda} />
       <TextInput
@@ -96,15 +122,32 @@ export default function Contacts() {
       ) : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
       {!loaded ? <Loader /> : null}
-      {loaded ? <View style={[styles.grid, wide && styles.gridWide]}>
+      {loaded && view === 'table' ? <ContactsTable contacts={visible} onOpen={(contact) => router.push(`/contacts/${contact.id}?workspace=${contact.workspaceId}`)} /> : null}
+      {loaded && view === 'map' ? <ContactsMap contacts={visible} canWrite={canWrite} onOpen={(contact) => router.push(`/contacts/${contact.id}?workspace=${contact.workspaceId}`)} /> : null}
+      {loaded && view === 'card' ? <View style={[styles.grid, wide && styles.gridWide]}>
         {visible.map((contact) => (
           <Pressable
             key={contact.id}
             onPress={() => router.push(`/contacts/${contact.id}?workspace=${contact.workspaceId}`)}
             style={styles.card}
           >
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{contact.displayName.slice(0, 1).toUpperCase()}</Text>
+            <View style={styles.avatarSlot}>
+              {contact.hasPhoto ? (
+                <AuthImage
+                  path={`/api/workspaces/${contact.workspaceId}/contacts/${contact.id}/photo`}
+                  size={42}
+                  radius={21}
+                  fallback={
+                    <View style={styles.avatar}>
+                      <Text style={styles.avatarText}>{contact.displayName.slice(0, 1).toUpperCase()}</Text>
+                    </View>
+                  }
+                />
+              ) : (
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>{contact.displayName.slice(0, 1).toUpperCase()}</Text>
+                </View>
+              )}
             </View>
             <Text style={styles.name}>{contact.displayName}</Text>
             <Text style={styles.detail}>{[contact.title, contact.organizationName].filter(Boolean).join(' · ') || 'No organization'}</Text>
@@ -127,7 +170,8 @@ export default function Contacts() {
 
 const styles = StyleSheet.create({
   page: { gap: 16 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
   kicker: { fontFamily: font, color: theme.muted, fontSize: 12, letterSpacing: 1.2, textTransform: 'uppercase' },
   title: { fontFamily: font, fontSize: 40, fontWeight: '700', color: theme.text, letterSpacing: -1 },
   meta: { fontFamily: font, color: theme.muted, marginTop: 4 },
@@ -144,7 +188,8 @@ const styles = StyleSheet.create({
   grid: { gap: 12 },
   gridWide: { flexDirection: 'row', flexWrap: 'wrap' },
   card: { backgroundColor: theme.surface, borderRadius: 22, borderWidth: 1, borderColor: theme.border, padding: 18, gap: 6, width: '100%', maxWidth: 340 },
-  avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: theme.accentMuted, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
+  avatarSlot: { marginBottom: 6 },
+  avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: theme.accentMuted, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: theme.text, fontFamily: font, fontWeight: '700' },
   name: { fontFamily: font, fontSize: 18, color: theme.text, fontWeight: '700' },
   detail: { fontFamily: font, color: theme.muted, fontSize: 13 },

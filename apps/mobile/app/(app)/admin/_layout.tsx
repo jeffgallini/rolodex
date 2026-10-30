@@ -1,0 +1,75 @@
+import { Link, Slot, usePathname } from 'expo-router'
+import { useCallback, useEffect, useState } from 'react'
+import { ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native'
+import { api, type Addon } from '../../../src/api'
+import { AdminNavContext } from '../../../src/admin-nav'
+import { useAuth } from '../../../src/auth'
+import { font, theme } from '../../../src/theme'
+
+const baseLinks = [
+  { href: '/admin/map' as const, label: 'Map' },
+  { href: '/admin/relationships' as const, label: 'Relationships' },
+  { href: '/admin/addons' as const, label: 'Add-ons' },
+]
+
+export default function AdminLayout() {
+  const { workspace } = useAuth()
+  const path = usePathname()
+  const wide = useWindowDimensions().width >= 880
+  const canManage = workspace?.role === 'owner' || workspace?.role === 'administrator'
+  const [addons, setAddons] = useState<Addon[]>([])
+  const refresh = useCallback(() => {
+    if (!workspace || !canManage) return
+    api<Addon[]>(`/api/workspaces/${workspace.id}/addons`).then(setAddons).catch(() => setAddons([]))
+  }, [workspace, canManage])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  if (!canManage) {
+    return (
+      <View style={styles.page}>
+        <Text style={styles.title}>Admin</Text>
+        <Text style={styles.meta}>Only owners and administrators can change these settings.</Text>
+      </View>
+    )
+  }
+
+  const links = [...baseLinks, ...(addons.some((addon) => addon.id === 'immich' && addon.enabled) ? [{ href: '/admin/immich' as const, label: 'Immich' }] : [])]
+  const nav = links.map((link) => {
+    const active = path === link.href
+    return (
+      <Link key={link.href} href={link.href} style={[styles.link, active && styles.linkActive]}>
+        {link.label}
+      </Link>
+    )
+  })
+
+  return (
+    <AdminNavContext.Provider value={{ refresh }}>
+      <View style={styles.page}>
+        <Text style={styles.title}>Admin</Text>
+        <View style={[styles.body, !wide && styles.bodyStacked]}>
+          {wide ? <View style={styles.sidebar}>{nav}</View> : <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sidebarRow}>{nav}</ScrollView>}
+          <View style={styles.main}>
+            <Slot />
+          </View>
+        </View>
+      </View>
+    </AdminNavContext.Provider>
+  )
+}
+
+const styles = StyleSheet.create({
+  page: { gap: 16 },
+  title: { fontFamily: font, fontSize: 28, fontWeight: '700', color: theme.text },
+  meta: { fontFamily: font, color: theme.muted },
+  body: { flexDirection: 'row', alignItems: 'flex-start', gap: 22 },
+  bodyStacked: { flexDirection: 'column' },
+  sidebar: { width: 180, gap: 4 },
+  sidebarRow: { gap: 8, paddingBottom: 4 },
+  link: { color: theme.muted, fontFamily: font, fontSize: 15, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12 },
+  linkActive: { backgroundColor: theme.text, color: '#fff' },
+  main: { flex: 1, gap: 14, minWidth: 0 },
+})

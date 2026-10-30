@@ -1,7 +1,7 @@
 import 'reflect-metadata'
 import { Module } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
-import { loadEnv } from '@rolodex/core'
+import { loadEnv, syncDueImmich } from '@rolodex/core'
 import { createDb } from '@rolodex/db'
 import { AuthController } from './auth.controller'
 import { DataController } from './data.controller'
@@ -46,6 +46,14 @@ async function main() {
   const port = Number(process.env.API_PORT || 3000)
   await app.listen(port)
   console.log(`API listening on ${port}`)
+  const database = app.get<ReturnType<typeof createDb>['db']>(DB)
+  const syncImmich = () => {
+    void syncDueImmich(database).catch((error: unknown) => {
+      console.warn(error instanceof Error ? error.message : 'Immich sync failed')
+    })
+  }
+  syncImmich()
+  setInterval(syncImmich, 30 * 60 * 1000)
 }
 
 void main()

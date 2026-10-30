@@ -2,12 +2,14 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useState } from 'react'
 import { createElement } from 'react'
 import { Linking, Platform, StyleSheet, Text, View } from 'react-native'
-import { api, ApiError, type Contact } from '../../../src/api'
+import { api, ApiError, type Contact, type ImmichGallery } from '../../../src/api'
 import { useAuth } from '../../../src/auth'
 import { Loader } from '../../../src/logo'
 import { methodTitle } from '../../../src/methods'
 import { font, theme } from '../../../src/theme'
+import { ImmichPhotos } from '../../../src/immich-photos'
 import { ProfileCrm } from '../../../src/profile-crm'
+import { Timeline } from '../../../src/timeline'
 import { Button, Panel } from '../../../src/ui'
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000'
@@ -21,6 +23,8 @@ export default function ContactProfile() {
   const [photo, setPhoto] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [canEdit, setCanEdit] = useState(false)
+  const [photoLinks, setPhotoLinks] = useState<ImmichGallery['attachments']>([])
+  const canWrite = canEdit || workspace?.role === 'owner' || workspace?.role === 'administrator' || workspace?.role === 'editor'
 
   function load() {
     if (!scope || !id) return
@@ -94,41 +98,54 @@ export default function ContactProfile() {
         ) : null}
       </View>
       {error ? <Text style={styles.error}>{error}</Text> : null}
-      <Panel>
-        <Text style={styles.section}>Overview</Text>
-        {contact.methods.map((method) => (
-          <Text
-            key={method.id}
-            style={styles.link}
-            onPress={() => void Linking.openURL(method.kind === 'email' ? `mailto:${method.value}` : `tel:${method.value}`)}
-          >
-            {methodTitle(method.label)}: {method.value}
-          </Text>
-        ))}
-        {contact.addresses.map((address) => (
-          <Text key={address.id} style={styles.body}>
-            {[address.street, address.city, address.region, address.postalCode, address.country].filter(Boolean).join(', ')}
-          </Text>
-        ))}
-        {contact.website ? <Text style={styles.link} onPress={() => void Linking.openURL(contact.website!)}>{contact.website}</Text> : null}
-        {contact.birthday ? <Text style={styles.body}>Birthday {contact.birthday}</Text> : null}
-        <View style={styles.pills}>
-          {contact.addressBooks?.map((book) => (
-            <Text key={book.id} style={styles.pill}>{book.name}</Text>
-          ))}
-          {contact.tags.map((tag) => (
-            <Text key={tag.id} style={styles.tag}>{tag.name}</Text>
-          ))}
-        </View>
-      </Panel>
-      <Panel>
-        <Text style={styles.section}>Details</Text>
-        <Text style={styles.body}>{contact.cardNote || 'No card note.'}</Text>
-        {contact.howWeMet ? <Text style={styles.body}>How we met: {contact.howWeMet}</Text> : null}
-        {contact.interests ? <Text style={styles.body}>Interests: {contact.interests}</Text> : null}
-        <Text style={styles.muted}>Card note is the only note copied to CardDAV. Private notes stay in Rolodex.</Text>
-      </Panel>
-      {scope ? <ProfileCrm workspaceId={scope} contactId={contact.id} canWrite={canEdit || workspace?.role === 'owner' || workspace?.role === 'administrator' || workspace?.role === 'editor'} birthday={contact.birthday} /> : null}
+      {scope ? (
+        <Timeline
+          workspaceId={scope}
+          contactId={contact.id}
+          canWrite={canWrite}
+          attachments={photoLinks}
+          about={
+            <View style={styles.page}>
+              <Panel>
+                <Text style={styles.section}>Overview</Text>
+                {contact.methods.map((method) => (
+                  <Text
+                    key={method.id}
+                    style={styles.link}
+                    onPress={() => void Linking.openURL(method.kind === 'email' ? `mailto:${method.value}` : `tel:${method.value}`)}
+                  >
+                    {methodTitle(method.label)}: {method.value}
+                  </Text>
+                ))}
+                {contact.addresses.map((address) => (
+                  <Text key={address.id} style={styles.body}>
+                    {[address.street, address.city, address.region, address.postalCode, address.country].filter(Boolean).join(', ')}
+                  </Text>
+                ))}
+                {contact.website ? <Text style={styles.link} onPress={() => void Linking.openURL(contact.website!)}>{contact.website}</Text> : null}
+                {contact.birthday ? <Text style={styles.body}>Birthday {contact.birthday}</Text> : null}
+                <View style={styles.pills}>
+                  {contact.addressBooks?.map((book) => (
+                    <Text key={book.id} style={styles.pill}>{book.name}</Text>
+                  ))}
+                  {contact.tags.map((tag) => (
+                    <Text key={tag.id} style={styles.tag}>{tag.name}</Text>
+                  ))}
+                </View>
+              </Panel>
+              <Panel>
+                <Text style={styles.section}>Details</Text>
+                <Text style={styles.body}>{contact.cardNote || 'No card note.'}</Text>
+                {contact.howWeMet ? <Text style={styles.body}>How we met: {contact.howWeMet}</Text> : null}
+                {contact.interests ? <Text style={styles.body}>Interests: {contact.interests}</Text> : null}
+                <Text style={styles.muted}>Card note is the only note copied to CardDAV. Private notes stay in Rolodex.</Text>
+              </Panel>
+              <ImmichPhotos workspaceId={scope} contactId={contact.id} canWrite={canWrite} onAttachments={setPhotoLinks} onPhoto={load} />
+              <ProfileCrm workspaceId={scope} contactId={contact.id} canWrite={canWrite} birthday={contact.birthday} followUpFrequency={contact.followUpFrequency} lastInteractionAt={contact.lastInteractionAt} />
+            </View>
+          }
+        />
+      ) : null}
     </View>
   )
 }

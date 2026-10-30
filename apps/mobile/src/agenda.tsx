@@ -13,6 +13,9 @@ export function agendaLines(agenda: Agenda) {
     const overdue = task.dueAt ? new Date(task.dueAt).getTime() < Date.now() : false
     lines.push({ key: task.id, label: overdue ? `Overdue: ${task.title}` : `Due: ${task.title}`, href: '/tasks' })
   }
+  for (const reach of agenda.reachOuts) {
+    lines.push({ key: `reach-${reach.contactId}`, label: reach.label, href: `/contacts/${reach.contactId}` })
+  }
   for (const reminder of agenda.reminders) {
     lines.push({
       key: reminder.id,

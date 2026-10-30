@@ -3,7 +3,9 @@ import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { api, type AddressBook, type Contact } from './api'
 import { useAuth } from './auth'
 import { AddressEditor } from './address-editor'
+import { cadences } from './cadence'
 import { TagField } from './fields'
+import { Choice } from './people'
 import { MethodList, type MethodDraft } from './methods'
 import { OrganizationField } from './organization-field'
 import { font, theme } from './theme'
@@ -32,6 +34,7 @@ export function ContactForm({
   const [cardNote, setCardNote] = useState(contact?.cardNote ?? '')
   const [howWeMet, setHowWeMet] = useState(contact?.howWeMet ?? '')
   const [interests, setInterests] = useState(contact?.interests ?? '')
+  const [cadence, setCadence] = useState(contact?.followUpFrequency ?? '')
   const [emails, setEmails] = useState<MethodDraft[]>(
     contact?.methods.filter((method) => method.kind === 'email').map((method) => ({ label: method.label, value: method.value })) ?? [
       { label: 'home', value: '' },
@@ -89,6 +92,7 @@ export function ContactForm({
       cardNote,
       howWeMet,
       interests,
+      followUpFrequency: cadence || null,
       methods,
       addresses: street || city || region || postalCode || country ? [{ label: 'home', street, city, region, postalCode, country }] : [],
       tagNames,
@@ -137,6 +141,13 @@ export function ContactForm({
       <Field label="Card note" multiline value={cardNote} onChangeText={setCardNote} />
       <Field label="How we met" value={howWeMet} onChangeText={setHowWeMet} />
       <Field label="Interests" value={interests} onChangeText={setInterests} />
+      <Text style={styles.section}>Reach out</Text>
+      <View style={styles.chips}>
+        <Choice label="No cadence" on={!cadence} onPress={() => setCadence('')} />
+        {cadences.map((item) => (
+          <Choice key={item.id} label={item.label} on={cadence === item.id} onPress={() => setCadence(item.id)} />
+        ))}
+      </View>
       <TagField tags={tagNames} suggestions={knownTags} onChange={setTagNames} />
       <Button label={pending ? 'Saving' : 'Save contact'} onPress={save} disabled={pending} />
     </View>
@@ -148,6 +159,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: 12 },
   grow: { flex: 1 },
   section: { fontFamily: font, color: theme.muted, fontSize: 11, letterSpacing: 0.8, textTransform: 'uppercase' },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
 })
 
 function BookSelect({
@@ -175,7 +187,7 @@ function BookSelect({
   }, [open])
 
   return (
-    <View ref={root} style={bookStyles.wrap}>
+    <View ref={root as never} style={bookStyles.wrap}>
       <Pressable accessibilityLabel="Address books" onPress={() => setOpen((current) => !current)} style={bookStyles.control}>
         <Text style={[bookStyles.value, !names.length && bookStyles.placeholder]}>{names.length ? names.join(', ') : 'Choose address books'}</Text>
         <Text style={bookStyles.chevron}>{open ? '▴' : '▾'}</Text>

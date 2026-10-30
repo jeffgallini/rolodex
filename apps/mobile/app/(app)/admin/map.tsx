@@ -1,11 +1,11 @@
 import { createElement, useEffect, useRef, useState } from 'react'
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native'
-import { api, type MapSettings } from '../../src/api'
-import { useAuth } from '../../src/auth'
-import { MapCanvas } from '../../src/map-canvas'
-import { alamo, savedSecret, themesFor, type MapEngine, type MapTheme } from '../../src/map-themes'
-import { font, theme } from '../../src/theme'
-import { Button, Field, Notice } from '../../src/ui'
+import { api, type MapSettings } from '../../../src/api'
+import { useAuth } from '../../../src/auth'
+import { MapCanvas } from '../../../src/map-canvas'
+import { alamo, savedSecret, themesFor, type MapEngine, type MapTheme } from '../../../src/map-themes'
+import { font, theme } from '../../../src/theme'
+import { Button, Field, Notice } from '../../../src/ui'
 
 const emptyMap: MapSettings = { engine: 'leaflet', templateId: 'osm', tileUrl: '', cartoKey: '', mapboxToken: '', googleKey: '' }
 
@@ -15,20 +15,19 @@ const engines: { id: MapEngine; title: string; detail: string; experimental?: bo
   { id: 'maplibre', title: 'MapLibre GL', detail: 'OpenFreeMap vector tiles, no token' },
 ]
 
-export default function Admin() {
+export default function MapPage() {
   const { workspace } = useAuth()
-  const canManage = workspace?.role === 'owner' || workspace?.role === 'administrator'
   const [draft, setDraft] = useState<MapSettings>(emptyMap)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const stored = useRef({ cartoKey: '', mapboxToken: '', googleKey: '' })
 
   useEffect(() => {
-    if (!workspace || !canManage) return
+    if (!workspace) return
     api<MapSettings>(`/api/workspaces/${workspace.id}/map`)
       .then(showSaved)
       .catch((caught: Error) => setError(caught.message))
-  }, [workspace, canManage])
+  }, [workspace])
 
   function showSaved(settings: MapSettings) {
     stored.current = {
@@ -50,12 +49,12 @@ export default function Admin() {
   }
 
   function chooseEngine(engine: MapEngine) {
-    const theme = themesFor(engine)[0]
-    setDraft((current) => ({ ...current, engine, templateId: theme?.id ?? '', tileUrl: theme?.url ?? '' }))
+    const next = themesFor(engine)[0]
+    setDraft((current) => ({ ...current, engine, templateId: next?.id ?? '', tileUrl: next?.url ?? '' }))
   }
 
-  function chooseTheme(theme: MapTheme) {
-    setDraft((current) => ({ ...current, templateId: theme.id, tileUrl: theme.url }))
+  function chooseTheme(next: MapTheme) {
+    setDraft((current) => ({ ...current, templateId: next.id, tileUrl: next.url }))
   }
 
   async function save() {
@@ -79,15 +78,6 @@ export default function Admin() {
     }
   }
 
-  if (!canManage) {
-    return (
-      <View style={styles.page}>
-        <Text style={styles.title}>Admin</Text>
-        <Text style={styles.meta}>Only owners and administrators can change these settings.</Text>
-      </View>
-    )
-  }
-
   const themes = themesFor(draft.engine)
   const urlLabel = draft.engine === 'leaflet' ? 'Tile URL' : draft.engine === 'mapbox' ? 'Mapbox style' : 'Style URL'
   const urlHint = draft.engine === 'leaflet'
@@ -97,63 +87,60 @@ export default function Admin() {
       : 'Leave empty for OpenFreeMap Liberty.'
 
   return (
-    <View style={styles.page}>
-      <Text style={styles.title}>Admin</Text>
-      <View style={styles.card}>
-        <Text style={styles.heading}>Map</Text>
-        <Text style={styles.section}>Map Provider</Text>
-        <Text style={styles.meta}>Affects the address map and the preview below. Address search always checks OpenStreetMap and Google together.</Text>
-        <View style={styles.engines}>
-          {engines.map((engine) => {
-            const selected = draft.engine === engine.id
-            return (
-              <Pressable key={engine.id} onPress={() => chooseEngine(engine.id)} style={[styles.engine, selected && styles.engineOn]}>
-                <View style={styles.engineTitleRow}>
-                  <Text style={styles.engineTitle}>{engine.title}</Text>
-                  {engine.experimental ? <Text style={styles.experimental}>Experimental</Text> : null}
-                </View>
-                <Text style={styles.engineDetail}>{engine.detail}</Text>
-              </Pressable>
-            )
-          })}
-        </View>
-        <Text style={styles.kicker}>Map template</Text>
-        <ThemeSelect themes={themes} value={draft.templateId} onChange={chooseTheme} />
-        <Field
-          label={urlLabel}
-          autoCapitalize="none"
-          value={draft.tileUrl}
-          onChangeText={(tileUrl) => setDraft((current) => ({ ...current, tileUrl }))}
-        />
-        <Text style={styles.hint}>{urlHint}</Text>
-        {draft.engine === 'leaflet' ? (
-          <>
-            <SecretField label="Carto API key" value={draft.cartoKey} onChangeText={(cartoKey) => setDraft((current) => ({ ...current, cartoKey }))} />
-            <Text style={styles.hint}>CARTO basemaps need this key on every tile. Free, no account, from carto.com/basemaps/apikey.</Text>
-          </>
-        ) : null}
-        {draft.engine === 'mapbox' ? (
-          <SecretField label="Mapbox access token" value={draft.mapboxToken} onChangeText={(mapboxToken) => setDraft((current) => ({ ...current, mapboxToken }))} />
-        ) : null}
-        <SecretField label="Google Maps API key" value={draft.googleKey} onChangeText={(googleKey) => setDraft((current) => ({ ...current, googleKey }))} />
-        <Text style={styles.hint}>Used for address suggestions alongside OpenStreetMap. The map tiles do not use this key.</Text>
-        <View style={styles.preview}>
-          <MapCanvas
-            settings={{
-              ...draft,
-              cartoKey: liveSecret(draft.cartoKey, stored.current.cartoKey),
-              mapboxToken: liveSecret(draft.mapboxToken, stored.current.mapboxToken),
-            }}
-            point={alamo}
-            height={220}
-          />
-        </View>
-        <View style={styles.saveRow}>
-          <Button label="Save Map" onPress={() => void save()} />
-        </View>
-        {error ? <Notice text={error} /> : null}
-        {notice ? <Text style={styles.meta}>{notice}</Text> : null}
+    <View style={styles.card}>
+      <Text style={styles.heading}>Map</Text>
+      <Text style={styles.section}>Map Provider</Text>
+      <Text style={styles.meta}>Affects the address map and the preview below. Address search always checks OpenStreetMap and Google together.</Text>
+      <View style={styles.engines}>
+        {engines.map((engine) => {
+          const selected = draft.engine === engine.id
+          return (
+            <Pressable key={engine.id} onPress={() => chooseEngine(engine.id)} style={[styles.engine, selected && styles.engineOn]}>
+              <View style={styles.engineTitleRow}>
+                <Text style={styles.engineTitle}>{engine.title}</Text>
+                {engine.experimental ? <Text style={styles.experimental}>Experimental</Text> : null}
+              </View>
+              <Text style={styles.engineDetail}>{engine.detail}</Text>
+            </Pressable>
+          )
+        })}
       </View>
+      <Text style={styles.kicker}>Map template</Text>
+      <ThemeSelect themes={themes} value={draft.templateId} onChange={chooseTheme} />
+      <Field
+        label={urlLabel}
+        autoCapitalize="none"
+        value={draft.tileUrl}
+        onChangeText={(tileUrl) => setDraft((current) => ({ ...current, tileUrl }))}
+      />
+      <Text style={styles.hint}>{urlHint}</Text>
+      {draft.engine === 'leaflet' ? (
+        <>
+          <SecretField label="Carto API key" value={draft.cartoKey} onChangeText={(cartoKey) => setDraft((current) => ({ ...current, cartoKey }))} />
+          <Text style={styles.hint}>CARTO basemaps need this key on every tile. Free, no account, from carto.com/basemaps/apikey.</Text>
+        </>
+      ) : null}
+      {draft.engine === 'mapbox' ? (
+        <SecretField label="Mapbox access token" value={draft.mapboxToken} onChangeText={(mapboxToken) => setDraft((current) => ({ ...current, mapboxToken }))} />
+      ) : null}
+      <SecretField label="Google Maps API key" value={draft.googleKey} onChangeText={(googleKey) => setDraft((current) => ({ ...current, googleKey }))} />
+      <Text style={styles.hint}>Used for address suggestions alongside OpenStreetMap. The map tiles do not use this key.</Text>
+      <View style={styles.preview}>
+        <MapCanvas
+          settings={{
+            ...draft,
+            cartoKey: liveSecret(draft.cartoKey, stored.current.cartoKey),
+            mapboxToken: liveSecret(draft.mapboxToken, stored.current.mapboxToken),
+          }}
+          point={alamo}
+          height={220}
+        />
+      </View>
+      <View style={styles.saveRow}>
+        <Button label="Save Map" onPress={() => void save()} />
+      </View>
+      {error ? <Notice text={error} /> : null}
+      {notice ? <Text style={styles.meta}>{notice}</Text> : null}
     </View>
   )
 }
@@ -192,8 +179,8 @@ function ThemeSelect({ themes, value, onChange }: { themes: MapTheme[]; value: s
       {
         value,
         onChange: (event: { target: { value: string } }) => {
-          const theme = themes.find((item) => item.id === event.target.value)
-          if (theme) onChange(theme)
+          const next = themes.find((item) => item.id === event.target.value)
+          if (next) onChange(next)
         },
         style: {
           width: '100%',
@@ -222,8 +209,6 @@ function ThemeSelect({ themes, value, onChange }: { themes: MapTheme[]; value: s
 }
 
 const styles = StyleSheet.create({
-  page: { gap: 14 },
-  title: { fontFamily: font, fontSize: 28, fontWeight: '700', color: theme.text },
   card: { backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border, borderRadius: 22, padding: 18, gap: 8 },
   heading: { fontFamily: font, fontSize: 22, fontWeight: '700', color: theme.text },
   section: { fontFamily: font, fontSize: 16, fontWeight: '700', color: theme.text, marginTop: 8 },

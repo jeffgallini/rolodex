@@ -2,12 +2,11 @@ import { spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
-  addHouseholdMember,
   addOrganizationMember,
   agenda,
   addressBookSchema,
+  addressLocationSchema,
   contactSchema,
-  contactHouseholds,
   contactOrganizations,
   completeTask,
   completeSchema,
@@ -15,10 +14,10 @@ import {
   createAddressBook,
   createContact,
   createCustomField,
-  createHousehold,
   createNote,
   createOrganization,
   createRelationship,
+  createRelationshipType,
   createReminder,
   createTag,
   createTask,
@@ -28,27 +27,47 @@ import {
   deleteActivity,
   deleteAddressBook,
   deleteContact,
-  deleteHousehold,
   deleteNote,
   deleteOrganization,
   deleteRelationship,
+  deleteRelationshipType,
   deleteTask,
   exportAddressBook,
   getContact,
   getMapSettings,
-  householdMemberSchema,
-  householdSchema,
+  addonSchema,
+  listAddons,
+  setAddon,
+  attachImmichAsset,
+  contactImmich,
+  deleteImmichInstance,
+  detachImmichAsset,
+  immichAssetSchema,
+  immichInstanceSchema,
+  immichLinkSchema,
+  immichPhotoSchema,
+  immichTestSchema,
+  linkImmichPerson,
+  listImmichInstances,
+  readImmichImage,
+  readImmichProfileImage,
+  saveImmichInstance,
+  searchImmichPeople,
+  syncWorkspaceImmich,
+  testImmichConnection,
+  unlinkImmichPerson,
   importAddressBook,
   importSchema,
   listActivities,
   listAddressBooks,
   listBookShares,
   listContacts,
+  locateContact,
   listCustomFields,
-  listHouseholds,
   listMembers,
-  listHouseholdNotes,
   listNotes,
+  listWorkspaceNotes,
+  listRelationshipTypes,
   listOrganizations,
   listRelationships,
   listTags,
@@ -65,9 +84,9 @@ import {
   placeDetails,
   placeProviders,
   relationshipSchema,
+  relationshipTypeSchema,
   reminderSchema,
   reverseWorkspacePlace,
-  removeHouseholdMember,
   removeOrganizationMember,
   searchPlaces,
   searchWorkspacePlaces,
@@ -81,7 +100,6 @@ import {
   taskSchema,
   updateAddressBook,
   updateContact,
-  updateHousehold,
   updateOrganization,
   updateMapSettings,
   unshareAddressBook,
@@ -237,6 +255,17 @@ export class DataController {
     return { ok: true }
   }
 
+  @Put('workspaces/:workspaceId/contacts/:contactId/location')
+  placeContact(
+    @Req() req: AuthedRequest,
+    @Param('workspaceId') workspaceId: string,
+    @Param('contactId') contactId: string,
+    @Body() body: unknown,
+  ) {
+    const input = parseBody(addressLocationSchema, body)
+    return locateContact(this.db, req.user.id, workspaceId, contactId, input.lat, input.lon)
+  }
+
   @Post('workspaces/:workspaceId/contacts/:contactId/photo')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
   async uploadPhoto(
@@ -246,25 +275,7 @@ export class DataController {
     @UploadedFile() file?: { mimetype: string; buffer: Buffer; originalname: string; size: number },
   ) {
     if (!file) throw new AppError(400, 'Choose an image file')
-    if (!images.has(file.mimetype)) throw new AppError(400, 'Use a JPEG, PNG, WebP, or GIF image')
-    const contact = await getContact(this.db, req.user.id, workspaceId, contactId)
-    const key = photoKey(workspaceId, contactId, file.originalname)
-    await putObject(this.storage, key, file.buffer, file.mimetype)
-    const [attachment] = await this.db
-      .insert(attachments)
-      .values({
-        workspaceId,
-        ownerId: req.user.id,
-        storageKey: key,
-        filename: file.originalname || 'photo',
-        contentType: file.mimetype,
-        sizeBytes: file.size,
-      })
-      .returning()
-    if (!attachment) throw new AppError(500, 'Could not store the photo')
-    const previous = contact.photoAttachmentId
-    await setContactPhoto(this.db, req.user.id, workspaceId, contactId, attachment.id)
-    if (previous) await this.removeAttachment(previous)
+    await this.storeContactPhoto(req.user.id, workspaceId, contactId, file.buffer, file.mimetype, file.originalname || 'photo')
     return { ok: true }
   }
 
@@ -370,46 +381,20 @@ export class DataController {
     return { ok: true }
   }
 
-  @Get('workspaces/:workspaceId/households')
-  households(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string) {
-    return listHouseholds(this.db, req.user.id, workspaceId)
+  @Get('workspaces/:workspaceId/relationship-types')
+  relationshipTypes(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string) {
+    return listRelationshipTypes(this.db, req.user.id, workspaceId)
   }
 
-  @Post('workspaces/:workspaceId/households')
-  addHousehold(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
-    return createHousehold(this.db, req.user.id, workspaceId, parseBody(householdSchema, body))
+  @Post('workspaces/:workspaceId/relationship-types')
+  addRelationshipType(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    return createRelationshipType(this.db, req.user.id, workspaceId, parseBody(relationshipTypeSchema, body))
   }
 
-  @Patch('workspaces/:workspaceId/households/:householdId')
-  editHousehold(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('householdId') householdId: string, @Body() body: unknown) {
-    return updateHousehold(this.db, req.user.id, workspaceId, householdId, parseBody(householdSchema, body))
-  }
-
-  @Delete('workspaces/:workspaceId/households/:householdId')
-  async removeHousehold(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('householdId') householdId: string) {
-    await deleteHousehold(this.db, req.user.id, workspaceId, householdId)
+  @Delete('workspaces/:workspaceId/relationship-types/:typeId')
+  async removeRelationshipType(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('typeId') typeId: string) {
+    await deleteRelationshipType(this.db, req.user.id, workspaceId, typeId)
     return { ok: true }
-  }
-
-  @Post('workspaces/:workspaceId/households/:householdId/members')
-  addToHousehold(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('householdId') householdId: string, @Body() body: unknown) {
-    return addHouseholdMember(this.db, req.user.id, workspaceId, householdId, parseBody(householdMemberSchema, body))
-  }
-
-  @Delete('workspaces/:workspaceId/households/:householdId/members/:contactId')
-  async removeFromHousehold(
-    @Req() req: AuthedRequest,
-    @Param('workspaceId') workspaceId: string,
-    @Param('householdId') householdId: string,
-    @Param('contactId') contactId: string,
-  ) {
-    await removeHouseholdMember(this.db, req.user.id, workspaceId, householdId, contactId)
-    return { ok: true }
-  }
-
-  @Get('workspaces/:workspaceId/contacts/:contactId/households')
-  personHouseholds(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string) {
-    return contactHouseholds(this.db, req.user.id, workspaceId, contactId)
   }
 
   @Get('workspaces/:workspaceId/organizations')
@@ -459,14 +444,14 @@ export class DataController {
     return contactOrganizations(this.db, req.user.id, workspaceId, contactId)
   }
 
+  @Get('workspaces/:workspaceId/notes')
+  workspaceNotes(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string) {
+    return listWorkspaceNotes(this.db, req.user.id, workspaceId)
+  }
+
   @Get('workspaces/:workspaceId/contacts/:contactId/notes')
   notes(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string) {
     return listNotes(this.db, req.user.id, workspaceId, contactId)
-  }
-
-  @Get('workspaces/:workspaceId/households/:householdId/notes')
-  householdNotes(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('householdId') householdId: string) {
-    return listHouseholdNotes(this.db, req.user.id, workspaceId, householdId)
   }
 
   @Post('workspaces/:workspaceId/notes')
@@ -612,6 +597,148 @@ export class DataController {
     await mkdir(dir, { recursive: true })
     await dumpDatabase(join(dir, 'database.sql'))
     return { ok: true, path: dir }
+  }
+
+  @Get('workspaces/:workspaceId/addons')
+  addons(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string) {
+    return listAddons(this.db, req.user.id, workspaceId)
+  }
+
+  @Put('workspaces/:workspaceId/addons/:addonId')
+  updateAddon(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('addonId') addonId: string, @Body() body: unknown) {
+    const input = parseBody(addonSchema, body)
+    return setAddon(this.db, req.user.id, workspaceId, addonId, input.enabled)
+  }
+
+  @Get('workspaces/:workspaceId/immich')
+  immichInstances(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string) {
+    return listImmichInstances(this.db, req.user.id, workspaceId)
+  }
+
+  @Post('workspaces/:workspaceId/immich')
+  addImmich(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    return saveImmichInstance(this.db, req.user.id, workspaceId, parseBody(immichInstanceSchema, body))
+  }
+
+  @Patch('workspaces/:workspaceId/immich/:instanceId')
+  editImmich(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('instanceId') instanceId: string, @Body() body: unknown) {
+    const input = parseBody(immichInstanceSchema, body)
+    return saveImmichInstance(this.db, req.user.id, workspaceId, { ...input, id: instanceId })
+  }
+
+  @Delete('workspaces/:workspaceId/immich/:instanceId')
+  async removeImmich(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('instanceId') instanceId: string) {
+    await deleteImmichInstance(this.db, req.user.id, workspaceId, instanceId)
+    return { ok: true }
+  }
+
+  @Post('workspaces/:workspaceId/immich/test')
+  testImmich(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    return testImmichConnection(this.db, req.user.id, workspaceId, parseBody(immichTestSchema, body))
+  }
+
+  @Post('workspaces/:workspaceId/immich/:instanceId/sync')
+  syncImmich(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('instanceId') instanceId: string) {
+    return syncWorkspaceImmich(this.db, req.user.id, workspaceId, instanceId)
+  }
+
+  @Get('workspaces/:workspaceId/immich/people')
+  immichPeople(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Query('q') q = '') {
+    return searchImmichPeople(this.db, req.user.id, workspaceId, q)
+  }
+
+  @Get('workspaces/:workspaceId/immich/people/:personId/thumbnail')
+  async immichPersonThumbnail(
+    @Req() req: AuthedRequest,
+    @Param('workspaceId') workspaceId: string,
+    @Param('personId') personId: string,
+    @Res() res: Response,
+  ) {
+    const image = await readImmichImage(this.db, req.user.id, workspaceId, { personId })
+    res.setHeader('Content-Type', image.contentType)
+    res.setHeader('Cache-Control', 'private, max-age=300')
+    res.send(image.bytes)
+  }
+
+  @Get('workspaces/:workspaceId/immich/assets/:assetId/thumbnail')
+  async immichAssetThumbnail(
+    @Req() req: AuthedRequest,
+    @Param('workspaceId') workspaceId: string,
+    @Param('assetId') assetId: string,
+    @Res() res: Response,
+  ) {
+    const image = await readImmichImage(this.db, req.user.id, workspaceId, { assetId })
+    res.setHeader('Content-Type', image.contentType)
+    res.setHeader('Cache-Control', 'private, max-age=300')
+    res.send(image.bytes)
+  }
+
+  @Get('workspaces/:workspaceId/contacts/:contactId/immich')
+  contactPhotos(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string) {
+    return contactImmich(this.db, req.user.id, workspaceId, contactId)
+  }
+
+  @Post('workspaces/:workspaceId/contacts/:contactId/immich')
+  linkPerson(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string, @Body() body: unknown) {
+    const input = parseBody(immichLinkSchema, body)
+    return linkImmichPerson(this.db, req.user.id, workspaceId, contactId, input.personId)
+  }
+
+  @Delete('workspaces/:workspaceId/contacts/:contactId/immich/:identityId')
+  async unlinkPerson(
+    @Req() req: AuthedRequest,
+    @Param('workspaceId') workspaceId: string,
+    @Param('contactId') contactId: string,
+    @Param('identityId') identityId: string,
+  ) {
+    await unlinkImmichPerson(this.db, req.user.id, workspaceId, contactId, identityId)
+    return { ok: true }
+  }
+
+  @Post('workspaces/:workspaceId/contacts/:contactId/immich/photo')
+  async immichProfilePhoto(
+    @Req() req: AuthedRequest,
+    @Param('workspaceId') workspaceId: string,
+    @Param('contactId') contactId: string,
+    @Body() body: unknown,
+  ) {
+    const input = parseBody(immichPhotoSchema, body)
+    if (!input.personId && !input.assetId) throw new AppError(400, 'Choose a photo')
+    const image = await readImmichProfileImage(this.db, req.user.id, workspaceId, input)
+    await this.storeContactPhoto(req.user.id, workspaceId, contactId, image.bytes, image.contentType, 'immich-photo')
+    return { ok: true }
+  }
+
+  @Post('workspaces/:workspaceId/activities/:activityId/immich')
+  attachPhoto(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('activityId') activityId: string, @Body() body: unknown) {
+    const input = parseBody(immichAssetSchema, body)
+    return attachImmichAsset(this.db, req.user.id, workspaceId, activityId, input.assetId)
+  }
+
+  @Delete('workspaces/:workspaceId/activities/:activityId/immich/:assetId')
+  async detachPhoto(
+    @Req() req: AuthedRequest,
+    @Param('workspaceId') workspaceId: string,
+    @Param('activityId') activityId: string,
+    @Param('assetId') assetId: string,
+  ) {
+    await detachImmichAsset(this.db, req.user.id, workspaceId, activityId, assetId)
+    return { ok: true }
+  }
+
+  private async storeContactPhoto(userId: string, workspaceId: string, contactId: string, bytes: Buffer, contentType: string, filename: string) {
+    if (!images.has(contentType)) throw new AppError(400, 'Use a JPEG, PNG, WebP, or GIF image')
+    const contact = await getContact(this.db, userId, workspaceId, contactId)
+    const key = photoKey(workspaceId, contactId, filename)
+    await putObject(this.storage, key, bytes, contentType)
+    const [attachment] = await this.db
+      .insert(attachments)
+      .values({ workspaceId, ownerId: userId, storageKey: key, filename, contentType, sizeBytes: bytes.length })
+      .returning()
+    if (!attachment) throw new AppError(500, 'Could not store the photo')
+    const previous = contact.photoAttachmentId
+    await setContactPhoto(this.db, userId, workspaceId, contactId, attachment.id)
+    if (previous) await this.removeAttachment(previous)
   }
 
   private async removeAttachment(id: string) {

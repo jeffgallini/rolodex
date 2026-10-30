@@ -4,58 +4,46 @@ import { Pressable, StyleSheet, Text, View } from 'react-native'
 import {
   api,
   send,
-  type Activity,
   type CustomField,
-  type Household,
-  type Note,
   type OrgMembership,
   type Relationship,
+  type RelationshipType,
   type Task,
 } from './api'
+import { cadenceLabel } from './cadence'
 import { font, theme } from './theme'
 import { Button, Field, Notice, Panel } from './ui'
 import { IndustryField } from './fields'
 import { OrgLogo } from './org-logo'
 import { Choice, PersonPicker } from './people'
 
-const categories = ['family', 'personal', 'professional', 'commercial', 'social', 'custom'] as const
-const types: Record<(typeof categories)[number], string[]> = {
-  family: ['spouse', 'parent', 'child', 'sibling', 'cousin', 'relative'],
-  personal: ['friend', 'neighbor', 'acquaintance'],
-  professional: ['colleague', 'manager', 'employee', 'business partner'],
-  commercial: ['client', 'vendor', 'customer', 'supplier'],
-  social: ['introduced by', 'mutual friend', 'community'],
-  custom: [],
-}
-const activityTypes = ['call', 'meeting', 'meal', 'note']
-
-export function ProfileCrm({ workspaceId, contactId, canWrite, birthday }: { workspaceId: string; contactId: string; canWrite: boolean; birthday: string | null }) {
+export function ProfileCrm({
+  workspaceId,
+  contactId,
+  canWrite,
+  birthday,
+  followUpFrequency,
+  lastInteractionAt,
+}: {
+  workspaceId: string
+  contactId: string
+  canWrite: boolean
+  birthday: string | null
+  followUpFrequency: string | null
+  lastInteractionAt: string | null
+}) {
   const router = useRouter()
   const [error, setError] = useState('')
   const [links, setLinks] = useState<Relationship[]>([])
-  const [homes, setHomes] = useState<{ id: string; name: string; role: string | null; city: string | null }[]>([])
+  const [relationTypes, setRelationTypes] = useState<RelationshipType[]>([])
   const [orgs, setOrgs] = useState<OrgMembership[]>([])
-  const [notes, setNotes] = useState<Note[]>([])
-  const [events, setEvents] = useState<Activity[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [fields, setFields] = useState<CustomField[]>([])
-  const [allHomes, setAllHomes] = useState<Household[]>([])
   const [allOrgs, setAllOrgs] = useState<{ id: string; name: string }[]>([])
-  const [category, setCategory] = useState<(typeof categories)[number]>('personal')
-  const [relation, setRelation] = useState('friend')
-  const [customType, setCustomType] = useState('')
+  const [relationKey, setRelationKey] = useState('')
   const [person, setPerson] = useState('')
-  const [note, setNote] = useState('')
-  const [sharedNote, setSharedNote] = useState(false)
-  const [eventType, setEventType] = useState('meeting')
-  const [eventDate, setEventDate] = useState(new Date().toISOString().slice(0, 10))
-  const [eventText, setEventText] = useState('')
-  const [eventPeople, setEventPeople] = useState<string[]>([])
   const [taskTitle, setTaskTitle] = useState('')
   const [taskDue, setTaskDue] = useState('')
-  const [homeId, setHomeId] = useState('')
-  const [homeRole, setHomeRole] = useState('')
-  const [newHome, setNewHome] = useState('')
   const [orgId, setOrgId] = useState('')
   const [orgTitle, setOrgTitle] = useState('')
   const [newOrg, setNewOrg] = useState('')
@@ -69,24 +57,18 @@ export function ProfileCrm({ workspaceId, contactId, canWrite, birthday }: { wor
     const base = `/api/workspaces/${workspaceId}`
     Promise.all([
       api<Relationship[]>(`${base}/contacts/${contactId}/relationships`),
-      api<typeof homes>(`${base}/contacts/${contactId}/households`),
+      api<RelationshipType[]>(`${base}/relationship-types`),
       api<OrgMembership[]>(`${base}/contacts/${contactId}/organizations`),
-      api<Note[]>(`${base}/contacts/${contactId}/notes`),
-      api<Activity[]>(`${base}/activities?contactId=${contactId}`),
       api<Task[]>(`${base}/tasks?contactId=${contactId}`),
       api<CustomField[]>(`${base}/contacts/${contactId}/fields`),
-      api<Household[]>(`${base}/households`),
       api<{ id: string; name: string }[]>(`${base}/organizations`),
     ])
-      .then(([nextLinks, nextHomes, nextOrgs, nextNotes, nextEvents, nextTasks, nextFields, homesList, orgsList]) => {
+      .then(([nextLinks, nextTypes, nextOrgs, nextTasks, nextFields, orgsList]) => {
         setLinks(nextLinks)
-        setHomes(nextHomes)
+        setRelationTypes(nextTypes)
         setOrgs(nextOrgs)
-        setNotes(nextNotes)
-        setEvents(nextEvents)
         setTasks(nextTasks)
         setFields(nextFields)
-        setAllHomes(homesList)
         setAllOrgs(orgsList)
         setDrafts(Object.fromEntries(nextFields.map((field) => [field.id, field.value == null ? '' : String(field.value)])))
         setError('')
@@ -106,75 +88,62 @@ export function ProfileCrm({ workspaceId, contactId, canWrite, birthday }: { wor
     }
   }
 
-  const relationType = category === 'custom' ? customType.trim() : relation
+  const sides = relationTypes.flatMap((type) => {
+    const options: { key: string; typeId: string; side: 'label' | 'reciprocal'; word: string }[] = [
+      { key: `${type.id}:label`, typeId: type.id, side: 'label', word: type.label },
+    ]
+    if (type.label.toLowerCase() !== type.reciprocalLabel.toLowerCase()) {
+      options.push({ key: `${type.id}:reciprocal`, typeId: type.id, side: 'reciprocal', word: type.reciprocalLabel })
+    }
+    return options
+  })
+  const chosen = sides.find((side) => side.key === relationKey) ?? sides[0]
+  const cadence = cadenceLabel(followUpFrequency)
+  const latest = lastInteractionAt
+  const daysSince = latest ? Math.floor((Date.now() - new Date(latest).getTime()) / 86_400_000) : null
+  const due = Boolean(cadence && followUpFrequency && (daysSince === null || daysSince >= Number(followUpFrequency)))
 
   return (
     <View style={styles.stack}>
       {error ? <Notice text={error} /> : null}
       <Panel>
+        <Text style={styles.section}>Stay in touch</Text>
+        {cadence ? (
+          <Text style={[styles.body, due && styles.due]}>
+            {cadence}.{daysSince === null ? ' No interaction logged yet.' : daysSince === 0 ? ' Last interaction was today.' : ` Last interaction was ${daysSince} days ago.`}
+          </Text>
+        ) : (
+          <Text style={styles.meta}>No cadence yet. Set one when you edit this contact.</Text>
+        )}
+      </Panel>
+      <Panel>
         <Text style={styles.section}>Relationships</Text>
         {links.map((link) => (
           <View key={link.id} style={styles.row}>
             <Pressable onPress={() => router.push(`/contacts/${link.contactId}`)}>
-              <Text style={styles.link}>{link.displayName}</Text>
+              <Text style={styles.link}>is the {link.type} of {link.displayName}</Text>
             </Pressable>
-            <Text style={styles.meta}>{link.category} · {link.type}</Text>
             {canWrite ? <Button label="Remove" tone="ghost" onPress={() => void run(() => send(`/api/workspaces/${workspaceId}/relationships/${link.id}`, 'DELETE'))} /> : null}
           </View>
         ))}
         {!links.length ? <Text style={styles.meta}>No relationships yet.</Text> : null}
         {canWrite ? (
           <View style={styles.form}>
+            <Text style={styles.meta}>This person is the</Text>
             <View style={styles.chips}>
-              {categories.map((item) => (
-                <Choice key={item} label={item} on={category === item} onPress={() => { setCategory(item); setRelation(types[item][0] ?? '') }} />
+              {sides.map((side) => (
+                <Choice key={side.key} label={side.word} on={chosen?.key === side.key} onPress={() => setRelationKey(side.key)} />
               ))}
             </View>
-            <View style={styles.chips}>
-              {types[category].map((item) => (
-                <Choice key={item} label={item} on={relation === item} onPress={() => setRelation(item)} />
-              ))}
-            </View>
-            {category === 'custom' ? <Field label="Type" value={customType} onChangeText={setCustomType} /> : null}
+            {!sides.length ? <Text style={styles.meta}>Define relationship pairs in Admin first.</Text> : null}
             <PersonPicker workspaceId={workspaceId} exclude={contactId} selected={person ? [person] : []} onToggle={(id) => setPerson(id === person ? '' : id)} />
             <Button
               label="Link person"
-              disabled={!person || !relationType}
+              disabled={!person || !chosen}
               onPress={() => void run(async () => {
-                await send(`/api/workspaces/${workspaceId}/contacts/${contactId}/relationships`, 'POST', { toContactId: person, category, type: relationType })
+                if (!chosen) return
+                await send(`/api/workspaces/${workspaceId}/contacts/${contactId}/relationships`, 'POST', { toContactId: person, typeId: chosen.typeId, side: chosen.side })
                 setPerson('')
-              })}
-            />
-          </View>
-        ) : null}
-      </Panel>
-      <Panel>
-        <Text style={styles.section}>Household</Text>
-        {homes.map((home) => (
-          <Text key={home.id} style={styles.body}>{home.name}{home.role ? ` · ${home.role}` : ''}{home.city ? ` · ${home.city}` : ''}</Text>
-        ))}
-        {!homes.length ? <Text style={styles.meta}>Not in a household.</Text> : null}
-        {canWrite ? (
-          <View style={styles.form}>
-            <View style={styles.chips}>
-              {allHomes.map((home) => (
-                <Choice key={home.id} label={home.name} on={homeId === home.id} onPress={() => setHomeId(home.id)} />
-              ))}
-            </View>
-            <Field label="Role" value={homeRole} onChangeText={setHomeRole} placeholder="spouse, child, roommate" />
-            <Button
-              label="Add to household"
-              disabled={!homeId}
-              onPress={() => void run(() => send(`/api/workspaces/${workspaceId}/households/${homeId}/members`, 'POST', { contactId, role: homeRole || null }))}
-            />
-            <Field label="New household" value={newHome} onChangeText={setNewHome} />
-            <Button
-              label="Create household"
-              disabled={!newHome.trim()}
-              onPress={() => void run(async () => {
-                const created = await send<Household>(`/api/workspaces/${workspaceId}/households`, 'POST', { name: newHome.trim() })
-                await send(`/api/workspaces/${workspaceId}/households/${created.id}/members`, 'POST', { contactId, role: homeRole || null })
-                setNewHome('')
               })}
             />
           </View>
@@ -214,69 +183,6 @@ export function ProfileCrm({ workspaceId, contactId, canWrite, birthday }: { wor
                 setNewOrg('')
                 setNewOrgIndustry('')
                 setNewOrgWebsite('')
-              })}
-            />
-          </View>
-        ) : null}
-      </Panel>
-      <Panel>
-        <Text style={styles.section}>Timeline</Text>
-        {events.map((event) => (
-          <View key={event.id} style={styles.block}>
-            <Text style={styles.body}>{event.type} · {event.occurredAt.slice(0, 10)}</Text>
-            {event.description ? <Text style={styles.meta}>{event.description}</Text> : null}
-            <Text style={styles.meta}>{event.people.map((person) => person.displayName).join(', ')} · {event.visibility}</Text>
-          </View>
-        ))}
-        {!events.length ? <Text style={styles.meta}>No activities yet.</Text> : null}
-        {canWrite ? (
-          <View style={styles.form}>
-            <View style={styles.chips}>
-              {activityTypes.map((item) => (
-                <Choice key={item} label={item} on={eventType === item} onPress={() => setEventType(item)} />
-              ))}
-            </View>
-            <Field label="Date" value={eventDate} onChangeText={setEventDate} placeholder="YYYY-MM-DD" />
-            <Field label="What happened" value={eventText} onChangeText={setEventText} />
-            <PersonPicker workspaceId={workspaceId} exclude={contactId} selected={eventPeople} onToggle={(id) => setEventPeople((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])} />
-            <Button
-              label="Add activity"
-              onPress={() => void run(async () => {
-                await send(`/api/workspaces/${workspaceId}/activities`, 'POST', {
-                  type: eventType,
-                  occurredAt: eventDate,
-                  description: eventText || null,
-                  contactIds: [contactId, ...eventPeople],
-                })
-                setEventText('')
-                setEventPeople([])
-              })}
-            />
-          </View>
-        ) : null}
-      </Panel>
-      <Panel>
-        <Text style={styles.section}>Notes</Text>
-        <Text style={styles.meta}>Private notes stay with you. Workspace notes are visible to people who can see this contact. Neither is written to the vCard.</Text>
-        {notes.map((item) => (
-          <View key={item.id} style={styles.row}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.body}>{item.body}</Text>
-              <Text style={styles.meta}>{item.visibility}</Text>
-            </View>
-            {canWrite ? <Button label="Delete" tone="ghost" onPress={() => void run(() => send(`/api/workspaces/${workspaceId}/notes/${item.id}`, 'DELETE'))} /> : null}
-          </View>
-        ))}
-        {canWrite ? (
-          <View style={styles.form}>
-            <Field label="Note" value={note} onChangeText={setNote} />
-            <Choice label={sharedNote ? 'Visible to workspace' : 'Private'} on={sharedNote} onPress={() => setSharedNote((current) => !current)} />
-            <Button
-              label="Save note"
-              disabled={!note.trim()}
-              onPress={() => void run(async () => {
-                await send(`/api/workspaces/${workspaceId}/notes`, 'POST', { body: note.trim(), contactId, visibility: sharedNote ? 'workspace' : 'private' })
-                setNote('')
               })}
             />
           </View>
@@ -374,6 +280,7 @@ const styles = StyleSheet.create({
   section: { fontFamily: font, fontSize: 13, color: theme.muted, marginBottom: 8, letterSpacing: 0.4 },
   body: { fontFamily: font, color: theme.text, fontSize: 15 },
   meta: { fontFamily: font, color: theme.muted, fontSize: 13 },
+  due: { color: theme.text, fontWeight: '700' },
   link: { fontFamily: font, color: theme.text, fontSize: 16, fontWeight: '700' },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 8 },
   identity: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },

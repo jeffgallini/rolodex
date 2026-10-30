@@ -54,6 +54,13 @@ export type ContactSummary = {
   primaryPhone: string | null
   updatedAt: string
   hasPhoto: boolean
+  street: string | null
+  city: string | null
+  region: string | null
+  postalCode: string | null
+  country: string | null
+  lat: number | null
+  lon: number | null
   tags: { id: string; name: string }[]
   addressBooks: { id: string; name: string }[]
 }
@@ -78,12 +85,13 @@ export type Contact = ContactSummary & {
   personalDetails: string | null
   professionalBackground: string | null
   followUpFrequency: string | null
+  lastInteractionAt: string | null
   addressBookId: string | null
   addressBookName: string | null
   addressBooks: { id: string; name: string }[]
   uid: string | null
   methods: { id: string; kind: string; label: string; value: string; isPrimary: boolean }[]
-  addresses: { id: string; label: string; street: string; street2: string; city: string; region: string; postalCode: string; country: string }[]
+  addresses: { id: string; label: string; street: string; street2: string; city: string; region: string; postalCode: string; country: string; lat: number | null; lon: number | null }[]
   tags: { id: string; name: string; color?: string | null }[]
 }
 export type AddressBook = { id: string; workspaceId: string; name: string; description: string | null; role: string; syncToken: number; shared: boolean }
@@ -111,20 +119,11 @@ export type MapSettings = {
 export type Member = { userId: string; email: string; displayName: string; role: string }
 export type AppPassword = { id: string; label: string; createdAt: string; lastUsedAt: string | null }
 export type Relationship = { id: string; category: string; type: string; description: string | null; contactId: string; displayName: string }
-export type Household = {
-  id: string
-  name: string
-  street: string | null
-  city: string | null
-  region: string | null
-  postalCode: string | null
-  country: string | null
-  members: { contactId: string; displayName: string; role: string | null }[]
-}
+export type RelationshipType = { id: string; label: string; reciprocalLabel: string }
 export type Organization = { id: string; name: string; industry: string | null; website: string | null; email: string | null; phone: string | null; city: string | null; logoUrl: string | null }
 export type OrgMembership = { id: string; name: string; title: string | null; department: string | null; website: string | null; logoUrl: string | null }
 export type OrgMember = { contactId: string; displayName: string; title: string | null; department: string | null }
-export type Note = { id: string; body: string; visibility: string; authorId: string | null; createdAt: string }
+export type Note = { id: string; body: string; visibility: string; authorId: string | null; contactId: string | null; contactName?: string | null; createdAt: string }
 export type Activity = {
   id: string
   type: string
@@ -136,10 +135,47 @@ export type Activity = {
 }
 export type Task = { id: string; title: string; dueAt: string | null; completedAt: string | null; contactId: string | null }
 export type CustomField = { id: string; label: string; fieldType: string; value: string | number | boolean | null }
+export type ImmichInstance = {
+  id: string
+  name: string
+  internalUrl: string
+  externalUrl: string
+  status: string
+  lastSyncedAt: string | null
+  apiKey: string
+  error: string | null
+}
+export type ImmichPersonHit = {
+  id: string
+  name: string
+  instanceName: string
+  missing: boolean
+  linkedContact: { id: string; displayName: string } | null
+}
+export type Addon = { id: string; name: string; description: string; enabled: boolean }
+export type ImmichGallery = {
+  enabled: boolean
+  connected: boolean
+  links: Array<{
+    identityId: string
+    personId: string
+    name: string
+    missing: boolean
+    instanceName: string
+    personUrl: string
+    photoCount: number
+    videoCount: number
+    error: string | null
+    assets: Array<{ id: string; kind: string; takenAt: string | null; photoUrl: string }>
+  }>
+  suggestions: Array<{ personId: string; name: string; instanceName: string }>
+  attachments: Array<{ activityId: string; assetId: string }>
+}
 export type Agenda = {
   dates: { contactId: string; displayName: string; kind: string; date: string; days: number }[]
   tasks: Task[]
   reminders: { id: string; type: string; remindAt: string; contactId: string | null }[]
+  reachOuts: { contactId: string; displayName: string; daysSince: number | null; label: string }[]
 }
 
 export function send<T>(path: string, method: string, body?: unknown) {

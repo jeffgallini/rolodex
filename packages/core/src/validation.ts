@@ -53,6 +53,8 @@ const addressSchema = z.object({
   region: z.string().max(120).nullish(),
   postalCode: z.string().max(40).nullish(),
   country: z.string().max(120).nullish(),
+  lat: z.number().finite().min(-90).max(90).nullish(),
+  lon: z.number().finite().min(-180).max(180).nullish(),
 })
 
 const dateField = z
@@ -110,13 +112,17 @@ export const appPasswordSchema = z.object({
   label: z.string().trim().min(1).max(80),
 })
 
-export const relationshipCategories = ['family', 'personal', 'professional', 'commercial', 'social', 'custom'] as const
+export const cadenceValues = ['7', '14', '30', '90', '180', '365'] as const
+
+export const relationshipTypeSchema = z.object({
+  label: z.string().trim().min(1).max(80),
+  reciprocalLabel: z.string().trim().min(1).max(80),
+})
 
 export const relationshipSchema = z.object({
   toContactId: z.string().uuid(),
-  category: z.enum(relationshipCategories),
-  type: z.string().trim().min(1).max(80),
-  description: optionalText(500),
+  typeId: z.string().uuid(),
+  side: z.enum(['label', 'reciprocal']),
 })
 
 const placeFields = {
@@ -126,16 +132,6 @@ const placeFields = {
   postalCode: optionalText(40),
   country: optionalText(120),
 }
-
-export const householdSchema = z.object({
-  name: z.string().trim().min(1).max(160),
-  ...placeFields,
-})
-
-export const householdMemberSchema = z.object({
-  contactId: z.string().uuid(),
-  role: optionalText(80),
-})
 
 export const organizationSchema = z.object({
   name: z.string().trim().min(1).max(200),
@@ -157,8 +153,7 @@ export const organizationMemberSchema = z.object({
 export const noteSchema = z.object({
   body: z.string().trim().min(1).max(8000),
   visibility: z.enum(['private', 'workspace']).optional(),
-  contactId: z.string().uuid().nullish(),
-  householdId: z.string().uuid().nullish(),
+  contactId: z.string().uuid(),
 })
 
 export const activitySchema = z.object({
@@ -204,6 +199,38 @@ export const mapSettingsSchema = z.object({
   mapboxToken: z.string().max(300).optional().default(''),
   googleKey: z.string().max(300).optional().default(''),
 })
+
+export const addressLocationSchema = z.object({
+  lat: z.number().finite().min(-90).max(90),
+  lon: z.number().finite().min(-180).max(180),
+})
+
+export const addonSchema = z.object({
+  enabled: z.boolean(),
+})
+
+export const immichInstanceSchema = z.object({
+  id: z.string().uuid().optional(),
+  name: z.string().trim().min(1).max(120),
+  internalUrl: z.string().trim().min(1).max(300),
+  externalUrl: z.string().trim().max(300).optional().default(''),
+  apiKey: z.string().max(500).optional().default(''),
+})
+
+export const immichTestSchema = z.object({
+  instanceId: z.string().uuid().optional(),
+  internalUrl: z.string().trim().min(1).max(300),
+  apiKey: z.string().max(500).optional().default(''),
+})
+
+export const immichLinkSchema = z.object({ personId: z.string().uuid() })
+
+export const immichPhotoSchema = z.object({
+  personId: z.string().uuid().optional(),
+  assetId: z.string().uuid().optional(),
+})
+
+export const immichAssetSchema = z.object({ assetId: z.string().uuid() })
 
 export function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
   const result = schema.safeParse(body)

@@ -12,9 +12,8 @@ import { font, theme } from './theme'
 type Menu = 'notifications' | 'profile' | 'more' | null
 
 const moreLinks = [
-  { href: '/households', label: 'Households' },
   { href: '/organizations', label: 'Organizations' },
-  { href: '/activity', label: 'Activity' },
+  { href: '/interactions', label: 'Interactions' },
   { href: '/tasks', label: 'Tasks' },
   { href: '/books', label: 'Address books' },
   { href: '/members', label: 'Members' },
@@ -39,7 +38,7 @@ export function MobileShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (menu !== 'notifications' || !workspace) return
-    api<Agenda>(`/api/workspaces/${workspace.id}/agenda`).then(setAgenda).catch(() => setAgenda({ dates: [], tasks: [], reminders: [] }))
+    api<Agenda>(`/api/workspaces/${workspace.id}/agenda`).then(setAgenda).catch(() => setAgenda({ dates: [], tasks: [], reminders: [], reachOuts: [] }))
   }, [menu, workspace])
 
   function toggle(next: Menu) {
