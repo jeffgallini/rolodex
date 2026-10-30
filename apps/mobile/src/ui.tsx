@@ -1,9 +1,10 @@
 import { Pressable, StyleSheet, Text, TextInput, View, type TextInputProps, type ViewProps } from 'react-native'
+import { useAccent } from './accent'
 import { font, theme } from './theme'
 
-export function Field({ label, ...props }: { label: string } & TextInputProps) {
+export function Field({ label, style, ...props }: { label: string; style?: ViewProps['style'] } & TextInputProps) {
   return (
-    <View style={styles.field}>
+    <View style={[styles.field, style]}>
       <Text style={styles.label}>{label}</Text>
       <TextInput placeholderTextColor={theme.muted} style={styles.input} {...props} />
     </View>
@@ -21,13 +22,14 @@ export function Button({
   tone?: 'primary' | 'ghost' | 'danger'
   disabled?: boolean
 }) {
+  const { accent, onAccent } = useAccent()
   return (
     <Pressable
       disabled={disabled}
       onPress={onPress}
-      style={[styles.button, tone === 'primary' ? styles.primary : tone === 'danger' ? styles.danger : styles.ghost, disabled && styles.disabled]}
+      style={[styles.button, tone === 'primary' ? { backgroundColor: accent } : tone === 'danger' ? styles.danger : styles.ghost, disabled && styles.disabled]}
     >
-      <Text style={[styles.buttonText, tone !== 'primary' && tone !== 'danger' && styles.ghostText]}>{label}</Text>
+      <Text style={[styles.buttonText, tone === 'primary' && { color: onAccent }, tone === 'ghost' && styles.ghostText]}>{label}</Text>
     </Pressable>
   )
 }
@@ -42,20 +44,19 @@ export function Notice({ text }: { text: string }) {
 
 const styles = StyleSheet.create({
   field: { gap: 6 },
-  label: { color: theme.muted, fontSize: 12, fontFamily: font, letterSpacing: 0.3 },
+  label: { color: theme.muted, fontSize: 11, fontFamily: font, letterSpacing: 0.8, textTransform: 'uppercase' },
   input: {
     borderWidth: 1,
     borderColor: theme.border,
     backgroundColor: theme.surface,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     fontSize: 15,
     color: theme.text,
     fontFamily: font,
   },
-  button: { borderRadius: 8, paddingHorizontal: 14, paddingVertical: 10, alignItems: 'center' },
-  primary: { backgroundColor: theme.accent },
+  button: { borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, alignItems: 'center' },
   danger: { backgroundColor: theme.danger },
   ghost: { backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border },
   disabled: { opacity: 0.5 },
@@ -65,8 +66,8 @@ const styles = StyleSheet.create({
     backgroundColor: theme.surface,
     borderWidth: 1,
     borderColor: theme.border,
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: 22,
+    padding: 18,
   },
   notice: { color: theme.danger, fontFamily: font, fontSize: 14 },
 })

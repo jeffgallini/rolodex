@@ -16,6 +16,7 @@ import {
   importAddressBook,
   importSchema,
   listAddressBooks,
+  listBookShares,
   listContacts,
   listMembers,
   listTags,
@@ -23,14 +24,20 @@ import {
   memberRoleSchema,
   memberSchema,
   parseBody,
+  placeDetails,
+  placeProviders,
+  searchPlaces,
   removeMember,
   setContactPhoto,
+  shareAddressBook,
   tagSchema,
   updateAddressBook,
   updateContact,
+  unshareAddressBook,
   updateMemberRole,
   workspaceSchema,
   AppError,
+  createRateLimiter,
 } from '@rolodex/core'
 import { attachments, type Database } from '@rolodex/db'
 import { and, eq } from 'drizzle-orm'
@@ -58,6 +65,7 @@ import { deleteObject, getObject, photoKey, putObject, type objectStorage } from
 type Storage = ReturnType<typeof objectStorage>
 
 const images = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
+const placeLimiter = createRateLimiter(30, 60_000)
 
 @Controller()
 @UseGuards(AuthGuard)
@@ -236,6 +244,22 @@ export class DataController {
     return { ok: true }
   }
 
+  @Get('places')
+  places(@Req() req: AuthedRequest, @Query('q') q = '', @Query('provider') provider = 'osm') {
+    if (!placeLimiter(req.user.id)) throw new AppError(429, 'Too many address searches. Wait a moment.')
+    return searchPlaces(q, provider === 'google' ? 'google' : 'osm')
+  }
+
+  @Get('places/providers')
+  providers() {
+    return placeProviders()
+  }
+
+  @Get('places/google/:placeId')
+  googlePlace(@Param('placeId') placeId: string) {
+    return placeDetails('google', placeId)
+  }
+
   @Get('workspaces/:workspaceId/address-books')
   addressBooks(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string) {
     return listAddressBooks(this.db, req.user.id, workspaceId)
@@ -269,6 +293,23 @@ export class DataController {
     res.setHeader('Content-Type', 'text/vcard; charset=utf-8')
     res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`)
     res.send(file.body)
+  }
+
+  @Get('workspaces/:workspaceId/address-books/:bookId/shares')
+  bookShares(@Req() req: AuthedRequest, @Param('bookId') bookId: string) {
+    return listBookShares(this.db, req.user.id, bookId)
+  }
+
+  @Post('workspaces/:workspaceId/address-books/:bookId/shares')
+  shareBook(@Req() req: AuthedRequest, @Param('bookId') bookId: string, @Body() body: unknown) {
+    const input = parseBody(memberSchema, body)
+    return shareAddressBook(this.db, req.user.id, bookId, input.email, input.role)
+  }
+
+  @Delete('workspaces/:workspaceId/address-books/:bookId/shares/:memberId')
+  async unshareBook(@Req() req: AuthedRequest, @Param('bookId') bookId: string, @Param('memberId') memberId: string) {
+    await unshareAddressBook(this.db, req.user.id, bookId, memberId)
+    return { ok: true }
   }
 
   @Post('workspaces/:workspaceId/address-books/:bookId/import')

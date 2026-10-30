@@ -62,6 +62,7 @@ const dateField = z
 
 export const contactSchema = z.object({
   addressBookId: z.string().uuid().optional(),
+  addressBookIds: z.array(z.string().uuid()).max(20).optional(),
   type: z.enum(contactTypes).optional(),
   prefix: optionalText(40),
   firstName: optionalText(120),

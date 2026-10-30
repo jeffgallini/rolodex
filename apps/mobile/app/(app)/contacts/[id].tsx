@@ -4,23 +4,25 @@ import { createElement } from 'react'
 import { Linking, Platform, StyleSheet, Text, View } from 'react-native'
 import { api, ApiError, type Contact } from '../../../src/api'
 import { useAuth } from '../../../src/auth'
+import { Loader } from '../../../src/logo'
 import { font, theme } from '../../../src/theme'
 import { Button, Panel } from '../../../src/ui'
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000'
 
 export default function ContactProfile() {
-  const { id } = useLocalSearchParams<{ id: string }>()
+  const { id, workspace: workspaceParam } = useLocalSearchParams<{ id: string; workspace?: string }>()
   const { workspace } = useAuth()
   const router = useRouter()
+  const scope = (typeof workspaceParam === 'string' && workspaceParam) || workspace?.id
   const [contact, setContact] = useState<Contact | null>(null)
   const [photo, setPhoto] = useState<string | null>(null)
   const [error, setError] = useState('')
-  const canEdit = workspace?.role === 'owner' || workspace?.role === 'administrator' || workspace?.role === 'editor'
+  const [canEdit, setCanEdit] = useState(false)
 
   function load() {
-    if (!workspace || !id) return
-    api<Contact>(`/api/workspaces/${workspace.id}/contacts/${id}`)
+    if (!scope || !id) return
+    api<Contact>(`/api/workspaces/${scope}/contacts/${id}`)
       .then(async (next) => {
         setContact(next)
         if (!next.hasPhoto || Platform.OS !== 'web') {
@@ -29,23 +31,26 @@ export default function ContactProfile() {
         }
         const token = sessionStorage.getItem('rolodex.session')
         const parsed = token ? (JSON.parse(token) as { token: string }) : null
-        const response = await fetch(`${API_URL}/api/workspaces/${workspace.id}/contacts/${id}/photo`, {
+        const response = await fetch(`${API_URL}/api/workspaces/${scope}/contacts/${id}/photo`, {
           headers: parsed ? { Authorization: `Bearer ${parsed.token}` } : undefined,
           credentials: 'include',
         })
         if (response.ok) setPhoto(URL.createObjectURL(await response.blob()))
+        const books = await api<{ id: string; role: string }[]>(`/api/workspaces/${scope}/address-books`)
+        const membership = new Set(next.addressBooks.map((book) => book.id))
+        setCanEdit(books.some((book) => membership.has(book.id) && (book.role === 'editor' || book.role === 'administrator' || book.role === 'owner')))
       })
       .catch((caught: Error) => setError(caught.message))
   }
 
-  useEffect(load, [workspace, id])
+  useEffect(load, [scope, id])
 
   async function upload(file: File) {
-    if (!workspace || !id) return
+    if (!scope || !id) return
     const body = new FormData()
     body.append('file', file)
     try {
-      await api(`/api/workspaces/${workspace.id}/contacts/${id}/photo`, { method: 'POST', body })
+      await api(`/api/workspaces/${scope}/contacts/${id}/photo`, { method: 'POST', body })
       load()
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : 'Could not upload the photo')
@@ -53,12 +58,12 @@ export default function ContactProfile() {
   }
 
   async function remove() {
-    if (!workspace || !id) return
-    await api(`/api/workspaces/${workspace.id}/contacts/${id}`, { method: 'DELETE' })
+    if (!scope || !id) return
+    await api(`/api/workspaces/${scope}/contacts/${id}`, { method: 'DELETE' })
     router.replace('/')
   }
 
-  if (!contact) return <Text style={styles.muted}>{error || 'Loading contact'}</Text>
+  if (!contact) return error ? <Text style={styles.muted}>{error}</Text> : <Loader />
   return (
     <View style={styles.page}>
       <View style={styles.header}>
@@ -81,7 +86,7 @@ export default function ContactProfile() {
                   },
                 })
               : null}
-            <Button label="Edit" tone="ghost" onPress={() => router.push(`/contacts/${contact.id}/edit`)} />
+            <Button label="Edit" tone="ghost" onPress={() => router.push(`/contacts/${contact.id}/edit?workspace=${scope}`)} />
             <Button label="Delete" tone="danger" onPress={() => void remove()} />
           </View>
         ) : null}
@@ -105,7 +110,14 @@ export default function ContactProfile() {
         ))}
         {contact.website ? <Text style={styles.link} onPress={() => void Linking.openURL(contact.website!)}>{contact.website}</Text> : null}
         {contact.birthday ? <Text style={styles.body}>Birthday {contact.birthday}</Text> : null}
-        <Text style={styles.body}>{contact.tags.map((tag) => tag.name).join(' · ')}</Text>
+        <View style={styles.pills}>
+          {contact.addressBooks?.map((book) => (
+            <Text key={book.id} style={styles.pill}>{book.name}</Text>
+          ))}
+          {contact.tags.map((tag) => (
+            <Text key={tag.id} style={styles.tag}>{tag.name}</Text>
+          ))}
+        </View>
       </Panel>
       <Panel>
         <Text style={styles.section}>Details</Text>
@@ -130,5 +142,8 @@ const styles = StyleSheet.create({
   muted: { fontFamily: font, color: theme.muted },
   error: { color: theme.danger, fontFamily: font },
   avatar: { width: 72, height: 72, borderRadius: 36, backgroundColor: theme.accentMuted, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontFamily: font, fontSize: 28, color: theme.accent, fontWeight: '700' },
+  avatarText: { fontFamily: font, fontSize: 28, color: theme.text, fontWeight: '700' },
+  pills: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  pill: { fontFamily: font, fontSize: 12, color: theme.text, borderWidth: 1, borderColor: theme.border, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+  tag: { fontFamily: font, fontSize: 12, color: '#fff', backgroundColor: theme.text, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
 })

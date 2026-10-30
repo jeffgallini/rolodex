@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Platform, StyleSheet, Text, View } from 'react-native'
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native'
+import { accentPresets, useAccent } from '../../src/accent'
 import { api, type AppPassword } from '../../src/api'
 import { useAuth } from '../../src/auth'
 import { font, theme } from '../../src/theme'
@@ -7,6 +8,11 @@ import { Button, Field, Notice, Panel } from '../../src/ui'
 
 export default function Settings() {
   const { session } = useAuth()
+  const { accent, setAccent } = useAccent()
+  const [draft, setDraft] = useState(accent)
+  const [colorError, setColorError] = useState('')
+
+  useEffect(() => setDraft(accent), [accent])
   const [passwords, setPasswords] = useState<AppPassword[]>([])
   const [label, setLabel] = useState('iPhone')
   const [created, setCreated] = useState('')
@@ -53,6 +59,38 @@ export default function Settings() {
   return (
     <View style={styles.page}>
       <Text style={styles.title}>Settings</Text>
+      <Panel>
+        <Text style={styles.name}>Accent color</Text>
+        <Text style={styles.meta}>Buttons use this color. It is saved for this account in this browser.</Text>
+        <View style={styles.swatches}>
+          {accentPresets.map((preset) => (
+            <Pressable
+              key={preset.value}
+              accessibilityLabel={preset.name}
+              onPress={() => {
+                setAccent(preset.value)
+                setDraft(preset.value)
+                setColorError('')
+              }}
+              style={[styles.swatch, { backgroundColor: preset.value }, accent === preset.value && styles.swatchOn]}
+            />
+          ))}
+        </View>
+        <Field label="Custom hex" autoCapitalize="none" value={draft} onChangeText={setDraft} placeholder="#1d4ed8" />
+        <Button
+          label="Use this color"
+          onPress={() => {
+            const next = draft.startsWith('#') ? draft : `#${draft}`
+            if (!/^#[0-9a-fA-F]{6}$/.test(next)) {
+              setColorError('Use a color like #1d4ed8')
+              return
+            }
+            setColorError('')
+            setAccent(next)
+          }}
+        />
+        {colorError ? <Notice text={colorError} /> : null}
+      </Panel>
       <Panel>
         <Text style={styles.name}>CardDAV</Text>
         <Text style={styles.meta}>Server</Text>
@@ -102,4 +140,7 @@ const styles = StyleSheet.create({
   value: { fontFamily: font, color: theme.text, fontSize: 15, marginBottom: 8 },
   secret: { fontFamily: font, color: theme.text, backgroundColor: theme.accentMuted, padding: 10, borderRadius: 8 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  swatches: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 12 },
+  swatch: { width: 32, height: 32, borderRadius: 16, borderWidth: 2, borderColor: 'transparent' },
+  swatchOn: { borderColor: theme.text },
 })

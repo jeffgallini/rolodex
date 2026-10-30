@@ -45,7 +45,6 @@ export async function listContacts(
   workspaceId: string,
   query: { q?: string | undefined; addressBookId?: string | undefined; limit?: number | undefined; offset?: number | undefined },
 ) {
-  await requireMembership(db, userId, workspaceId)
   const limit = Math.min(Math.max(query.limit ?? 50, 1), 200)
   const offset = Math.max(query.offset ?? 0, 0)
   const filters = [eq(contacts.workspaceId, workspaceId), isNull(contacts.deletedAt)]
@@ -55,6 +54,8 @@ export async function listContacts(
     filters.push(
       sql`exists (select 1 from contact_resources r where r.contact_id = ${contacts.id} and r.address_book_id = ${book.id} and r.deleted_at is null)`,
     )
+  } else {
+    await requireMembership(db, userId, workspaceId)
   }
   const q = query.q?.trim()
   if (q) {
@@ -95,6 +96,13 @@ export async function listContacts(
         .innerJoin(tags, eq(tags.id, contactTags.tagId))
         .where(inArray(contactTags.contactId, ids))
     : []
+  const bookRows = ids.length
+    ? await db
+        .select({ contactId: contactResources.contactId, id: addressBooks.id, name: addressBooks.name })
+        .from(contactResources)
+        .innerJoin(addressBooks, eq(addressBooks.id, contactResources.addressBookId))
+        .where(and(inArray(contactResources.contactId, ids), isNull(contactResources.deletedAt), isNull(addressBooks.deletedAt)))
+    : []
   return {
     total: countRow?.total ?? 0,
     contacts: rows.map((row) => {
@@ -103,6 +111,7 @@ export async function listContacts(
       const phone = methods.find((method) => method.kind === 'phone' && method.isPrimary) ?? methods.find((method) => method.kind === 'phone')
       return {
         id: row.id,
+        workspaceId: row.workspaceId,
         displayName: row.displayName,
         organizationName: row.organizationName,
         title: row.title,
@@ -111,28 +120,29 @@ export async function listContacts(
         updatedAt: row.updatedAt.toISOString(),
         hasPhoto: Boolean(row.photoAttachmentId),
         tags: tagRows.filter((tag) => tag.contactId === row.id).map((tag) => ({ id: tag.id, name: tag.name })),
+        addressBooks: bookRows.filter((book) => book.contactId === row.id).map((book) => ({ id: book.id, name: book.name })),
       }
     }),
   }
 }
 
 export async function getContact(db: Database, userId: string, workspaceId: string, contactId: string) {
-  await requireMembership(db, userId, workspaceId)
   const bundle = await loadBundle(db, contactId)
-  if (bundle.contact.workspaceId !== workspaceId) throw new AppError(404, 'Contact not found')
+  await assertCanReadContact(db, userId, workspaceId, bundle)
   return presentContact(bundle)
 }
 
 export async function createContact(db: Database, userId: string, workspaceId: string, input: ContactBody) {
   await requireWriter(db, userId, workspaceId)
-  const book = await resolveBook(db, userId, workspaceId, input.addressBookId)
+  const bookIds = await writableBookIds(db, userId, workspaceId, input)
   return db.transaction(async (tx) => {
     const database = tx as unknown as Database
     const contactId = await insertContact(database, {
       workspaceId,
       ownerId: userId,
       input,
-      bookId: book.id,
+      bookId: bookIds[0]!,
+      bookIds,
     })
     await recordAudit(database, workspaceId, userId, 'contact.create', contactId)
     return presentContact(await loadBundle(database, contactId))
@@ -146,7 +156,9 @@ export async function updateContact(
   contactId: string,
   input: ContactBody,
 ) {
-  await requireWriter(db, userId, workspaceId)
+  const existingAccess = await loadBundle(db, contactId)
+  await assertCanWriteContact(db, userId, workspaceId, existingAccess)
+  const bookIds = input.addressBookIds ? await writableBookIds(db, userId, workspaceId, input) : undefined
   return db.transaction(async (tx) => {
     const database = tx as unknown as Database
     const existing = await loadBundle(database, contactId)
@@ -163,14 +175,14 @@ export async function updateContact(
     if (input.methods) await replaceMethods(database, contactId, input.methods)
     if (input.addresses) await replaceAddresses(database, contactId, input.addresses)
     if (input.tagIds || input.tagNames) await replaceTags(database, contactId, tagIds)
-    await syncResources(database, contactId)
+    await syncResources(database, contactId, bookIds ? { bookIds } : undefined)
     await recordAudit(database, workspaceId, userId, 'contact.update', contactId)
     return presentContact(await loadBundle(database, contactId))
   })
 }
 
 export async function deleteContact(db: Database, userId: string, workspaceId: string, contactId: string) {
-  await requireWriter(db, userId, workspaceId)
+  await assertCanWriteContact(db, userId, workspaceId, await loadBundle(db, contactId))
   await db.transaction(async (tx) => {
     const database = tx as unknown as Database
     const existing = await loadBundle(database, contactId)
@@ -182,9 +194,8 @@ export async function deleteContact(db: Database, userId: string, workspaceId: s
 }
 
 export async function setContactPhoto(db: Database, userId: string, workspaceId: string, contactId: string, attachmentId: string | null) {
-  await requireWriter(db, userId, workspaceId)
   const bundle = await loadBundle(db, contactId)
-  if (bundle.contact.workspaceId !== workspaceId) throw new AppError(404, 'Contact not found')
+  await assertCanWriteContact(db, userId, workspaceId, bundle)
   await db.update(contacts).set({ photoAttachmentId: attachmentId, updatedAt: new Date() }).where(eq(contacts.id, contactId))
 }
 
@@ -393,9 +404,69 @@ async function resolveBook(db: Database, userId: string, workspaceId: string, ad
   return book
 }
 
+async function writableBookIds(db: Database, userId: string, workspaceId: string, input: ContactBody) {
+  const requested = [...new Set([...(input.addressBookIds ?? []), ...(input.addressBookId ? [input.addressBookId] : [])])]
+  if (input.addressBookIds && !requested.length) throw new AppError(400, 'Choose at least one address book')
+  if (!requested.length) {
+    const book = await resolveBook(db, userId, workspaceId)
+    return [book.id]
+  }
+  for (const id of requested) {
+    const { book } = await requireBook(db, userId, id, true)
+    if (book.workspaceId !== workspaceId) throw new AppError(400, 'Choose address books from this workspace')
+  }
+  return requested
+}
+
+async function assertCanReadContact(db: Database, userId: string, workspaceId: string, bundle: Bundle) {
+  if (bundle.contact.workspaceId !== workspaceId) throw new AppError(404, 'Contact not found')
+  try {
+    await requireMembership(db, userId, workspaceId)
+    return
+  } catch (error) {
+    if (!(error instanceof AppError) || error.status !== 404) throw error
+  }
+  for (const book of bundle.books) {
+    try {
+      await requireBook(db, userId, book.id)
+      return
+    } catch (error) {
+      if (!(error instanceof AppError)) throw error
+    }
+  }
+  throw new AppError(404, 'Contact not found')
+}
+
+async function assertCanWriteContact(db: Database, userId: string, workspaceId: string, bundle: Bundle) {
+  if (bundle.contact.workspaceId !== workspaceId) throw new AppError(404, 'Contact not found')
+  try {
+    await requireWriter(db, userId, workspaceId)
+    return
+  } catch (error) {
+    if (!(error instanceof AppError) || (error.status !== 403 && error.status !== 404)) throw error
+  }
+  for (const book of bundle.books) {
+    try {
+      await requireBook(db, userId, book.id, true)
+      return
+    } catch (error) {
+      if (!(error instanceof AppError)) throw error
+    }
+  }
+  throw new AppError(403, 'You do not have permission to edit contacts')
+}
+
 async function insertContact(
   db: Db,
-  args: { workspaceId: string; ownerId: string; input: ContactBody; bookId: string; uid?: string | undefined; unknown?: string[] | undefined },
+  args: {
+    workspaceId: string
+    ownerId: string
+    input: ContactBody
+    bookId: string
+    bookIds?: string[] | undefined
+    uid?: string | undefined
+    unknown?: string[] | undefined
+  },
 ) {
   if (args.input.introducedByContactId) {
     await assertSameWorkspaceContact(db, args.workspaceId, args.input.introducedByContactId)
@@ -413,7 +484,7 @@ async function insertContact(
   if (args.input.methods) await replaceMethods(db, contact.id, args.input.methods)
   if (args.input.addresses) await replaceAddresses(db, contact.id, args.input.addresses)
   if (tagIds.length) await replaceTags(db, contact.id, tagIds)
-  await syncResources(db, contact.id, { bookId: args.bookId, uid: args.uid, unknown: args.unknown })
+  await syncResources(db, contact.id, { bookId: args.bookId, bookIds: args.bookIds ?? [args.bookId], uid: args.uid, unknown: args.unknown })
   return contact.id
 }
 
@@ -666,20 +737,23 @@ async function loadBundle(db: Db, contactId: string) {
     .innerJoin(tags, eq(tags.id, contactTags.tagId))
     .where(eq(contactTags.contactId, contactId))
     .orderBy(asc(tags.name))
-  const [resource] = await db
+  const resources = await db
     .select()
     .from(contactResources)
     .where(and(eq(contactResources.contactId, contactId), isNull(contactResources.deletedAt)))
     .orderBy(desc(contactResources.updatedAt))
-    .limit(1)
-  const [book] = resource
-    ? await db.select().from(addressBooks).where(eq(addressBooks.id, resource.addressBookId)).limit(1)
+  const bookRows = resources.length
+    ? await db
+        .select()
+        .from(addressBooks)
+        .where(and(inArray(addressBooks.id, resources.map((resource) => resource.addressBookId)), isNull(addressBooks.deletedAt)))
     : []
-  return { contact, methods, addresses: addressRows, tags: tagRows, resource, book }
+  const liveResources = resources.filter((resource) => bookRows.some((item) => item.id === resource.addressBookId))
+  return { contact, methods, addresses: addressRows, tags: tagRows, resource: liveResources[0] ?? resources[0], book: bookRows[0], books: bookRows }
 }
 
 function presentContact(bundle: Bundle) {
-  const { contact, methods, addresses: addressRows, tags: tagRows, resource, book } = bundle
+  const { contact, methods, addresses: addressRows, tags: tagRows, resource, book, books } = bundle
   return {
     id: contact.id,
     workspaceId: contact.workspaceId,
@@ -711,6 +785,7 @@ function presentContact(bundle: Bundle) {
     photoAttachmentId: contact.photoAttachmentId,
     addressBookId: book?.id ?? null,
     addressBookName: book?.name ?? null,
+    addressBooks: books.map((item) => ({ id: item.id, name: item.name })),
     uid: resource?.uid ?? null,
     etag: resource?.etag ?? null,
     createdAt: contact.createdAt.toISOString(),
@@ -739,14 +814,27 @@ function presentContact(bundle: Bundle) {
 async function syncResources(
   db: Db,
   contactId: string,
-  options?: { bookId?: string; uid?: string; unknown?: string[]; deleted?: boolean },
+  options?: { bookId?: string; bookIds?: string[]; uid?: string; unknown?: string[]; deleted?: boolean },
 ) {
   const [contact] = await db.select().from(contacts).where(eq(contacts.id, contactId)).limit(1)
   if (!contact) throw new AppError(404, 'Contact not found')
   const methods = await db.select().from(contactMethods).where(eq(contactMethods.contactId, contactId)).orderBy(asc(contactMethods.sortOrder))
   const addressRows = await db.select().from(addresses).where(eq(addresses.contactId, contactId)).orderBy(asc(addresses.sortOrder))
   let resources = await db.select().from(contactResources).where(eq(contactResources.contactId, contactId))
-  if (!resources.length) {
+  if (options?.bookIds?.length) {
+    for (const bookId of options.bookIds) {
+      if (resources.some((resource) => resource.addressBookId === bookId)) continue
+      await db.insert(contactResources).values({
+        contactId,
+        addressBookId: bookId,
+        uid: options.uid && bookId === options.bookId ? options.uid : randomUUID(),
+        etag: 'pending',
+        vcardText: '',
+        unknownProperties: options.unknown ?? [],
+      })
+    }
+    resources = await db.select().from(contactResources).where(eq(contactResources.contactId, contactId))
+  } else if (!resources.length) {
     if (!options?.bookId) throw new AppError(500, 'Contact is missing an address book')
     const uid = options.uid ?? randomUUID()
     await db.insert(contactResources).values({
@@ -772,7 +860,9 @@ async function syncResources(
         : (resource.unknownProperties ?? [])
       const now = new Date()
       const next = book.syncToken + 1
-      if (options?.deleted) {
+      const removed = Boolean(options?.bookIds && !options.bookIds.includes(bookId))
+      if (removed && resource.deletedAt) continue
+      if (options?.deleted || removed) {
         await db
           .update(contactResources)
           .set({ deletedAt: now, updatedAt: now })

@@ -1,6 +1,8 @@
 import { Link, Slot, usePathname, useRouter } from 'expo-router'
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native'
 import { useAuth } from '../../src/auth'
+import { RolodexMark } from '../../src/logo'
+import { MobileShell } from '../../src/mobile-shell'
 import { font, theme } from '../../src/theme'
 
 const links = [
@@ -16,20 +18,21 @@ export default function AppLayout() {
   const router = useRouter()
   const wide = useWindowDimensions().width >= 880
 
+  if (!wide) {
+    return (
+      <MobileShell>
+        <Slot />
+      </MobileShell>
+    )
+  }
+
   return (
-    <View style={[styles.shell, !wide && styles.stacked]}>
-      <View style={[styles.nav, !wide && styles.navNarrow]}>
-        <Text style={styles.brand}>Rolodex</Text>
-        <Text style={styles.workspace}>{workspace?.name ?? 'Workspace'}</Text>
-        {workspaces.length > 1 ? (
-          <View style={styles.switcher}>
-            {workspaces.map((item) => (
-              <Pressable key={item.id} onPress={() => selectWorkspace(item)}>
-                <Text style={[styles.switch, item.id === workspace?.id && styles.switchActive]}>{item.name}</Text>
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
+    <View style={styles.shell}>
+      <View style={[styles.bar, !wide && styles.barNarrow]}>
+        <Pressable onPress={() => router.push('/')} style={styles.brand}>
+          <RolodexMark size={42} />
+          <Text style={styles.brandText}>rolodex</Text>
+        </Pressable>
         <View style={styles.links}>
           {links.map((link) => {
             const active = link.href === '/' ? path === '/' : path.startsWith(link.href)
@@ -40,6 +43,18 @@ export default function AppLayout() {
             )
           })}
         </View>
+        <View style={styles.spacer} />
+        {workspaces.length > 1 ? (
+          <View style={styles.switcher}>
+            {workspaces.map((item) => (
+              <Pressable key={item.id} onPress={() => selectWorkspace(item)}>
+                <Text style={[styles.switch, item.id === workspace?.id && styles.switchActive]}>{item.name}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : (
+          <Text style={styles.workspace}>{workspace?.name}</Text>
+        )}
         <Text style={styles.user}>{session?.displayName}</Text>
         <Pressable
           onPress={() => {
@@ -57,20 +72,30 @@ export default function AppLayout() {
 }
 
 const styles = StyleSheet.create({
-  shell: { flex: 1, flexDirection: 'row', backgroundColor: theme.bg },
-  stacked: { flexDirection: 'column' },
-  nav: { width: 232, backgroundColor: '#111418', padding: 20, gap: 12 },
-  navNarrow: { width: '100%', paddingVertical: 14 },
-  brand: { color: '#fff', fontFamily: font, fontSize: 20, fontWeight: '700' },
-  workspace: { color: '#c5ccd6', fontFamily: font, fontSize: 13 },
-  switcher: { gap: 4 },
-  switch: { color: '#9aa3b2', fontFamily: font, fontSize: 13 },
-  switchActive: { color: '#fff' },
-  links: { gap: 4, marginTop: 8 },
-  link: { color: '#d5dbe3', fontFamily: font, fontSize: 14, paddingVertical: 8, paddingHorizontal: 8, borderRadius: 8 },
-  linkActive: { backgroundColor: '#243044', color: '#fff' },
-  user: { color: '#9aa3b2', fontFamily: font, marginTop: 'auto', fontSize: 13 },
-  signOut: { color: '#d5dbe3', fontFamily: font, fontSize: 13 },
+  shell: { flex: 1, backgroundColor: theme.bg },
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+    backgroundColor: theme.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.border,
+  },
+  barNarrow: { flexWrap: 'wrap', gap: 10 },
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  brandText: { color: theme.text, fontFamily: font, fontSize: 20, fontWeight: '700', letterSpacing: -0.4 },
+  links: { flexDirection: 'row', gap: 4, flexWrap: 'wrap' },
+  link: { color: theme.muted, fontFamily: font, fontSize: 14, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999 },
+  linkActive: { backgroundColor: theme.text, color: '#fff' },
+  spacer: { flex: 1 },
+  workspace: { color: theme.muted, fontFamily: font, fontSize: 13 },
+  switcher: { flexDirection: 'row', gap: 8 },
+  switch: { color: theme.muted, fontFamily: font, fontSize: 13 },
+  switchActive: { color: theme.text, fontWeight: '700' },
+  user: { color: theme.text, fontFamily: font, fontSize: 13 },
+  signOut: { color: theme.muted, fontFamily: font, fontSize: 13 },
   main: { flex: 1 },
-  content: { padding: 28, gap: 16, maxWidth: 980, width: '100%', alignSelf: 'center' },
+  content: { padding: 28, gap: 16, maxWidth: 1120, width: '100%', alignSelf: 'center' },
 })

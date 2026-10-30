@@ -1,6 +1,6 @@
 import { createElement, useEffect, useState } from 'react'
 import { Platform, StyleSheet, Text, View } from 'react-native'
-import { api, type AddressBook } from '../../src/api'
+import { api, type AddressBook, type Member } from '../../src/api'
 import { useAuth } from '../../src/auth'
 import { font, theme } from '../../src/theme'
 import { Button, Field, Notice, Panel } from '../../src/ui'
@@ -79,11 +79,7 @@ export default function Books() {
       <Text style={styles.title}>Address books</Text>
       {error ? <Notice text={error} /> : null}
       {books.map((book) => (
-        <Panel key={book.id}>
-          <Text style={styles.name}>{book.name}</Text>
-          <Text style={styles.meta}>Sync token {book.syncToken}</Text>
-          <Button label="Export vCard" tone="ghost" onPress={() => { setBookId(book.id); void download(book.id) }} />
-        </Panel>
+        <BookCard key={book.id} book={book} onChanged={load} onExport={(id) => { setBookId(id); void download(id) }} />
       ))}
       {canEdit ? (
         <Panel>
@@ -139,6 +135,157 @@ export default function Books() {
   )
 }
 
+function BookCard({ book, onChanged, onExport }: { book: AddressBook; onChanged: () => void; onExport: (id: string) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState(book.name)
+  const [description, setDescription] = useState(book.description ?? '')
+  const [confirming, setConfirming] = useState(false)
+  const [note, setNote] = useState('')
+  const canWrite = book.role === 'owner' || book.role === 'administrator' || book.role === 'editor'
+  const canShare = book.role === 'owner' || book.role === 'administrator'
+
+  useEffect(() => {
+    setName(book.name)
+    setDescription(book.description ?? '')
+  }, [book.name, book.description])
+
+  async function save() {
+    setNote('')
+    try {
+      await api(`/api/workspaces/${book.workspaceId}/address-books/${book.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: name.trim(), description: description.trim() || null }),
+      })
+      setEditing(false)
+      onChanged()
+    } catch (caught) {
+      setNote(caught instanceof Error ? caught.message : 'Could not rename the address book')
+    }
+  }
+
+  async function remove() {
+    setNote('')
+    try {
+      await api(`/api/workspaces/${book.workspaceId}/address-books/${book.id}`, { method: 'DELETE' })
+      onChanged()
+    } catch (caught) {
+      setNote(caught instanceof Error ? caught.message : 'Could not delete the address book')
+    }
+  }
+
+  return (
+    <Panel>
+      {editing ? (
+        <View style={{ gap: 8 }}>
+          <Field label="Name" value={name} onChangeText={setName} />
+          <Field label="Description" value={description} onChangeText={setDescription} />
+          <View style={styles.shareRow}>
+            <Button label="Save" onPress={() => void save()} />
+            <Button label="Cancel" tone="ghost" onPress={() => { setEditing(false); setName(book.name); setDescription(book.description ?? '') }} />
+          </View>
+        </View>
+      ) : (
+        <>
+          <Text style={styles.name}>{book.name}{book.shared ? ' · shared with you' : ''}</Text>
+          {book.description ? <Text style={styles.meta}>{book.description}</Text> : null}
+          <Text style={styles.meta}>Sync token {book.syncToken}</Text>
+        </>
+      )}
+      {confirming ? (
+        <View style={{ gap: 8 }}>
+          <Text style={styles.meta}>Delete {book.name}? People stay in the workspace. This book and its cards leave CardDAV.</Text>
+          <View style={styles.shareRow}>
+            <Button label="Delete address book" tone="danger" onPress={() => void remove()} />
+            <Button label="Cancel" tone="ghost" onPress={() => setConfirming(false)} />
+          </View>
+        </View>
+      ) : (
+        <View style={styles.shareRow}>
+          {canWrite ? <Button label="Rename" tone="ghost" onPress={() => setEditing(true)} /> : null}
+          <Button label="Export vCard" tone="ghost" onPress={() => onExport(book.id)} />
+          {canWrite ? <Button label="Delete" tone="danger" onPress={() => setConfirming(true)} /> : null}
+        </View>
+      )}
+      {note ? <Notice text={note} /> : null}
+      {canShare ? <ShareBook book={book} /> : null}
+    </Panel>
+  )
+}
+
+function ShareBook({ book }: { book: AddressBook }) {
+  const { workspace } = useAuth()
+  const [shares, setShares] = useState<Member[]>([])
+  const [email, setEmail] = useState('')
+  const [role, setRole] = useState<'viewer' | 'editor'>('viewer')
+  const [note, setNote] = useState('')
+
+  function load() {
+    if (!workspace) return
+    api<Member[]>(`/api/workspaces/${book.workspaceId}/address-books/${book.id}/shares`).then(setShares).catch((caught: Error) => setNote(caught.message))
+  }
+
+  useEffect(load, [book.id, book.workspaceId, workspace])
+
+  async function share() {
+    setNote('')
+    try {
+      await api(`/api/workspaces/${book.workspaceId}/address-books/${book.id}/shares`, {
+        method: 'POST',
+        body: JSON.stringify({ email, role }),
+      })
+      setEmail('')
+      load()
+    } catch (caught) {
+      setNote(caught instanceof Error ? caught.message : 'Could not share the address book')
+    }
+  }
+
+  return (
+    <View style={{ gap: 8, marginTop: 12 }}>
+      <Text style={styles.name}>Share</Text>
+      {shares.map((member) => (
+        <View key={member.userId} style={styles.shareRow}>
+          <Text style={styles.meta}>{member.displayName} · {member.email}</Text>
+          <Button
+            label="Viewer"
+            tone={member.role === 'viewer' ? 'primary' : 'ghost'}
+            onPress={() => {
+              void api(`/api/workspaces/${book.workspaceId}/address-books/${book.id}/shares`, {
+                method: 'POST',
+                body: JSON.stringify({ email: member.email, role: 'viewer' }),
+              }).then(load)
+            }}
+          />
+          <Button
+            label="Editor"
+            tone={member.role === 'editor' ? 'primary' : 'ghost'}
+            onPress={() => {
+              void api(`/api/workspaces/${book.workspaceId}/address-books/${book.id}/shares`, {
+                method: 'POST',
+                body: JSON.stringify({ email: member.email, role: 'editor' }),
+              }).then(load)
+            }}
+          />
+          <Button
+            label="Remove"
+            tone="danger"
+            onPress={() => {
+              void api(`/api/workspaces/${book.workspaceId}/address-books/${book.id}/shares/${member.userId}`, { method: 'DELETE' }).then(load)
+            }}
+          />
+        </View>
+      ))}
+      <Field label="Email" autoCapitalize="none" value={email} onChangeText={setEmail} />
+      <View style={styles.shareRow}>
+        <Button label="Viewer" tone={role === 'viewer' ? 'primary' : 'ghost'} onPress={() => setRole('viewer')} />
+        <Button label="Editor" tone={role === 'editor' ? 'primary' : 'ghost'} onPress={() => setRole('editor')} />
+      </View>
+      <Button label="Share address book" onPress={() => void share()} />
+      {note ? <Text style={styles.meta}>{note}</Text> : null}
+    </View>
+  )
+}
+
 const styles = StyleSheet.create({
   page: { gap: 14 },
   title: { fontFamily: font, fontSize: 28, fontWeight: '700', color: theme.text },
@@ -146,4 +293,5 @@ const styles = StyleSheet.create({
   meta: { fontFamily: font, color: theme.muted, marginBottom: 8 },
   choice: { fontFamily: font, color: theme.muted, paddingVertical: 4 },
   choiceActive: { color: theme.accent },
+  shareRow: { flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap' },
 })

@@ -27,9 +27,13 @@ export {
   deleteAddressBook,
   exportAddressBook,
   importAddressBook,
+  listBookShares,
+  shareAddressBook,
+  unshareAddressBook,
   formatSyncToken,
   readSyncToken,
 } from './books'
+export { searchPlaces, placeDetails, placeProviders, type PlaceSuggestion } from './places'
 export { parseBody, registerSchema, loginSchema, workspaceSchema, memberSchema, memberRoleSchema, addressBookSchema, tagSchema, contactSchema, importSchema, appPasswordSchema } from './validation'
 export { parseVcards, serializeVcard } from './vcard'
 export { createRateLimiter } from './rate-limit'

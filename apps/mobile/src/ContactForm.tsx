@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
-import { api, type AddressBook, type Contact } from './api'
+import { api, type AddressBook, type Contact, type Place } from './api'
 import { useAuth } from './auth'
+import { AddressSearch, TagField } from './fields'
 import { font, theme } from './theme'
 import { Button, Field, Notice } from './ui'
 
@@ -16,7 +17,10 @@ export function ContactForm({
 }) {
   const { workspace } = useAuth()
   const [books, setBooks] = useState<AddressBook[]>([])
-  const [addressBookId, setAddressBookId] = useState(contact?.addressBookId ?? '')
+  const [addressBookIds, setAddressBookIds] = useState<string[]>(
+    contact?.addressBooks?.map((book) => book.id) ?? (contact?.addressBookId ? [contact.addressBookId] : []),
+  )
+  const [knownTags, setKnownTags] = useState<string[]>([])
   const [firstName, setFirstName] = useState(contact?.firstName ?? '')
   const [lastName, setLastName] = useState(contact?.lastName ?? '')
   const [preferredName, setPreferredName] = useState(contact?.preferredName ?? '')
@@ -42,25 +46,35 @@ export function ContactForm({
   const [region, setRegion] = useState(contact?.addresses[0]?.region ?? '')
   const [postalCode, setPostalCode] = useState(contact?.addresses[0]?.postalCode ?? '')
   const [country, setCountry] = useState(contact?.addresses[0]?.country ?? '')
-  const [tagNames, setTagNames] = useState(contact?.tags.map((tag) => tag.name).join(', ') ?? '')
+  const [tagNames, setTagNames] = useState<string[]>(contact?.tags.map((tag) => tag.name) ?? [])
   const [error, setError] = useState('')
   const [pending, setPending] = useState(false)
 
   useEffect(() => {
-    if (!workspace || contact) return
-    api<AddressBook[]>(`/api/workspaces/${workspace.id}/address-books`).then((rows) => {
-      setBooks(rows)
-      setAddressBookId(rows[0]?.id ?? '')
-    }).catch((caught: Error) => setError(caught.message))
+    if (!workspace) return
+    api<AddressBook[]>(`/api/workspaces/${workspace.id}/address-books`)
+      .then((rows) => {
+        const own = rows.filter((book) => book.workspaceId === workspace.id)
+        setBooks(own)
+        if (!contact) setAddressBookIds((current) => (current.length ? current : own[0] ? [own[0].id] : []))
+      })
+      .catch((caught: Error) => setError(caught.message))
+    api<{ name: string }[]>(`/api/workspaces/${workspace.id}/tags`)
+      .then((rows) => setKnownTags(rows.map((row) => row.name)))
+      .catch(() => setKnownTags([]))
   }, [workspace, contact])
 
   async function save() {
     if (!workspace) return
+    if (!addressBookIds.length) {
+      setError('Choose at least one address book')
+      return
+    }
     setPending(true)
     setError('')
     const methods = [...emails, ...phones].filter((method) => method.value.trim())
     const body = {
-      addressBookId: contact ? undefined : addressBookId,
+      addressBookIds,
       firstName,
       lastName,
       preferredName,
@@ -73,7 +87,7 @@ export function ContactForm({
       interests,
       methods,
       addresses: street || city || region || postalCode || country ? [{ label: 'home', street, city, region, postalCode, country }] : [],
-      tagNames: tagNames.split(',').map((tag) => tag.trim()).filter(Boolean),
+      tagNames,
     }
     try {
       const saved = contact
@@ -90,18 +104,26 @@ export function ContactForm({
   return (
     <View style={styles.form}>
       {error ? <Notice text={error} /> : null}
-      {!contact ? (
-        <View style={styles.books}>
-          {books.map((book) => (
-            <Pressable key={book.id} onPress={() => setAddressBookId(book.id)} style={[styles.book, addressBookId === book.id && styles.bookActive]}>
-              <Text style={styles.bookText}>{book.name}</Text>
+      <Text style={styles.section}>Address books</Text>
+      <View style={styles.books}>
+        {books.map((book) => {
+          const selected = addressBookIds.includes(book.id)
+          return (
+            <Pressable
+              key={book.id}
+              onPress={() =>
+                setAddressBookIds((current) => (selected ? current.filter((id) => id !== book.id) : [...current, book.id]))
+              }
+              style={[styles.book, selected && styles.bookActive]}
+            >
+              <Text style={[styles.bookText, selected && styles.bookTextActive]}>{book.name}</Text>
             </Pressable>
-          ))}
-        </View>
-      ) : null}
+          )
+        })}
+      </View>
       <View style={styles.row}>
-        <Field label="First name" value={firstName} onChangeText={setFirstName} />
-        <Field label="Last name" value={lastName} onChangeText={setLastName} />
+        <Field style={styles.grow} label="First name" value={firstName} onChangeText={setFirstName} />
+        <Field style={styles.grow} label="Last name" value={lastName} onChangeText={setLastName} />
       </View>
       <View style={styles.row}>
         <Field label="Preferred name" value={preferredName} onChangeText={setPreferredName} />
@@ -127,6 +149,15 @@ export function ContactForm({
         />
       ))}
       <Button label="Add phone" tone="ghost" onPress={() => setPhones([...phones, { kind: 'phone', label: 'mobile', value: '' }])} />
+      <AddressSearch
+        onPick={(place: Place) => {
+          if (place.street) setStreet(place.street)
+          if (place.city) setCity(place.city)
+          if (place.region) setRegion(place.region)
+          if (place.postalCode) setPostalCode(place.postalCode)
+          if (place.country) setCountry(place.country)
+        }}
+      />
       <Field label="Street" value={street} onChangeText={setStreet} />
       <View style={styles.row}>
         <Field label="City" value={city} onChangeText={setCity} />
@@ -141,7 +172,7 @@ export function ContactForm({
       <Field label="Card note" multiline value={cardNote} onChangeText={setCardNote} />
       <Field label="How we met" value={howWeMet} onChangeText={setHowWeMet} />
       <Field label="Interests" value={interests} onChangeText={setInterests} />
-      <Field label="Tags" placeholder="family, client" value={tagNames} onChangeText={setTagNames} />
+      <TagField tags={tagNames} suggestions={knownTags} onChange={setTagNames} />
       <Button label={pending ? 'Saving' : 'Save contact'} onPress={save} disabled={pending} />
     </View>
   )
@@ -150,8 +181,11 @@ export function ContactForm({
 const styles = StyleSheet.create({
   form: { gap: 12 },
   row: { flexDirection: 'row', gap: 12 },
+  grow: { flex: 1 },
+  section: { fontFamily: font, color: theme.muted, fontSize: 11, letterSpacing: 0.8, textTransform: 'uppercase' },
   books: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  book: { borderWidth: 1, borderColor: theme.border, borderRadius: 99, paddingHorizontal: 12, paddingVertical: 6 },
-  bookActive: { backgroundColor: theme.accentMuted, borderColor: theme.accent },
+  book: { borderWidth: 1, borderColor: theme.border, borderRadius: 99, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: theme.surface },
+  bookActive: { backgroundColor: theme.text, borderColor: theme.text },
   bookText: { fontFamily: font, color: theme.text },
+  bookTextActive: { color: '#fff' },
 })

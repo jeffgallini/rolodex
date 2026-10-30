@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
-import { addressBooks, contactResources, workspaceMembers, type Database } from '@rolodex/db'
+import { addressBookChanges, addressBookMembers, addressBooks, contactResources, users, workspaceMembers, type Database, type WorkspaceRole } from '@rolodex/db'
 import { and, asc, eq, isNull } from 'drizzle-orm'
 import { defaultWritableWorkspace, requireBook, requireWriter } from './access'
 import { cardFingerprint, createContactFromCard, findDuplicates } from './contacts'
 import { AppError } from './errors'
 import { normalizeEmail, normalizePhone } from './normalize'
+import { canManageMembers, roleAtLeast } from './permissions'
 import { cardDisplayName, parseVcards, type ParsedCard } from './vcard'
 
 export async function createAddressBook(
@@ -42,15 +43,70 @@ export async function createAddressBookForPrincipal(db: Database, userId: string
 }
 
 export async function listAddressBooks(db: Database, userId: string, workspaceId?: string) {
-  const filters = [eq(workspaceMembers.userId, userId), isNull(addressBooks.deletedAt)]
-  if (workspaceId) filters.push(eq(addressBooks.workspaceId, workspaceId))
-  const rows = await db
+  const ownFilters = [eq(workspaceMembers.userId, userId), isNull(addressBooks.deletedAt)]
+  const sharedFilters = [eq(addressBookMembers.userId, userId), isNull(addressBooks.deletedAt)]
+  if (workspaceId) ownFilters.push(eq(addressBooks.workspaceId, workspaceId))
+  const own = await db
     .select({ book: addressBooks, role: workspaceMembers.role })
     .from(addressBooks)
     .innerJoin(workspaceMembers, eq(workspaceMembers.workspaceId, addressBooks.workspaceId))
-    .where(and(...filters))
+    .where(and(...ownFilters))
     .orderBy(asc(addressBooks.name))
-  return rows.map((row) => ({ ...row.book, role: row.role }))
+  const shared = await db
+    .select({ book: addressBooks, role: addressBookMembers.role })
+    .from(addressBooks)
+    .innerJoin(addressBookMembers, eq(addressBookMembers.addressBookId, addressBooks.id))
+    .where(and(...sharedFilters))
+  const byId = new Map<string, (typeof own)[number]['book'] & { role: WorkspaceRole; shared: boolean }>()
+  for (const row of own) byId.set(row.book.id, { ...row.book, role: row.role, shared: false })
+  for (const row of shared) {
+    const current = byId.get(row.book.id)
+    if (!current) byId.set(row.book.id, { ...row.book, role: row.role, shared: true })
+    else if (roleAtLeast(row.role, current.role)) byId.set(row.book.id, { ...current, role: row.role })
+  }
+  return [...byId.values()].sort((left, right) => left.name.localeCompare(right.name))
+}
+
+async function requireBookManager(db: Database, userId: string, bookId: string) {
+  const access = await requireBook(db, userId, bookId)
+  if (!canManageMembers(access.role)) throw new AppError(403, 'You do not have permission to share this address book')
+  return access
+}
+
+export async function listBookShares(db: Database, userId: string, bookId: string) {
+  const { book } = await requireBook(db, userId, bookId)
+  const rows = await db
+    .select({ userId: users.id, email: users.email, displayName: users.displayName, role: addressBookMembers.role })
+    .from(addressBookMembers)
+    .innerJoin(users, eq(users.id, addressBookMembers.userId))
+    .where(eq(addressBookMembers.addressBookId, book.id))
+    .orderBy(asc(users.displayName))
+  return rows
+}
+
+export async function shareAddressBook(db: Database, userId: string, bookId: string, email: string, role: WorkspaceRole) {
+  if (role === 'owner') throw new AppError(400, 'Share a book as a viewer, contributor, editor, or administrator')
+  const { book } = await requireBookManager(db, userId, bookId)
+  const [person] = await db.select().from(users).where(eq(users.email, normalizeEmail(email))).limit(1)
+  if (!person) throw new AppError(404, 'No account exists for that email')
+  const [existing] = await db
+    .select()
+    .from(addressBookMembers)
+    .where(and(eq(addressBookMembers.addressBookId, book.id), eq(addressBookMembers.userId, person.id)))
+    .limit(1)
+  if (existing) {
+    await db.update(addressBookMembers).set({ role }).where(eq(addressBookMembers.id, existing.id))
+  } else {
+    await db.insert(addressBookMembers).values({ addressBookId: book.id, userId: person.id, role })
+  }
+  return { userId: person.id, email: person.email, displayName: person.displayName, role }
+}
+
+export async function unshareAddressBook(db: Database, userId: string, bookId: string, memberId: string) {
+  const { book } = await requireBookManager(db, userId, bookId)
+  await db
+    .delete(addressBookMembers)
+    .where(and(eq(addressBookMembers.addressBookId, book.id), eq(addressBookMembers.userId, memberId)))
 }
 
 export async function updateAddressBook(
@@ -74,7 +130,18 @@ export async function updateAddressBook(
 
 export async function deleteAddressBook(db: Database, userId: string, bookId: string) {
   const { book } = await requireBook(db, userId, bookId, true)
-  await db.update(addressBooks).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(addressBooks.id, book.id))
+  const now = new Date()
+  const live = await db
+    .select()
+    .from(contactResources)
+    .where(and(eq(contactResources.addressBookId, book.id), isNull(contactResources.deletedAt)))
+  let token = book.syncToken
+  for (const resource of live) {
+    token += 1
+    await db.update(contactResources).set({ deletedAt: now, updatedAt: now }).where(eq(contactResources.id, resource.id))
+    await db.insert(addressBookChanges).values({ addressBookId: book.id, syncToken: token, uid: resource.uid, deleted: true })
+  }
+  await db.update(addressBooks).set({ deletedAt: now, updatedAt: now, syncToken: token }).where(eq(addressBooks.id, book.id))
 }
 
 export async function exportAddressBook(db: Database, userId: string, bookId: string) {

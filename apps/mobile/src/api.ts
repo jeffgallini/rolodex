@@ -46,6 +46,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
 export type Workspace = { id: string; name: string; role: string }
 export type ContactSummary = {
   id: string
+  workspaceId: string
   displayName: string
   organizationName: string | null
   title: string | null
@@ -54,6 +55,7 @@ export type ContactSummary = {
   updatedAt: string
   hasPhoto: boolean
   tags: { id: string; name: string }[]
+  addressBooks: { id: string; name: string }[]
 }
 export type Contact = ContactSummary & {
   type: string
@@ -78,11 +80,13 @@ export type Contact = ContactSummary & {
   followUpFrequency: string | null
   addressBookId: string | null
   addressBookName: string | null
+  addressBooks: { id: string; name: string }[]
   uid: string | null
   methods: { id: string; kind: string; label: string; value: string; isPrimary: boolean }[]
   addresses: { id: string; label: string; street: string; street2: string; city: string; region: string; postalCode: string; country: string }[]
   tags: { id: string; name: string; color?: string | null }[]
 }
-export type AddressBook = { id: string; name: string; description: string | null; role: string; syncToken: number }
+export type AddressBook = { id: string; workspaceId: string; name: string; description: string | null; role: string; syncToken: number; shared: boolean }
+export type Place = { id: string; label: string; street: string; city: string; region: string; postalCode: string; country: string; provider: 'osm' | 'google' }
 export type Member = { userId: string; email: string; displayName: string; role: string }
 export type AppPassword = { id: string; label: string; createdAt: string; lastUsedAt: string | null }

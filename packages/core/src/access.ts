@@ -1,4 +1,5 @@
 import {
+  addressBookMembers,
   addressBooks,
   users,
   workspaceMembers,
@@ -56,11 +57,22 @@ export async function findAddressBook(db: Db, ref: string) {
 export async function requireBook(db: Db, userId: string, ref: string, write = false) {
   const book = await findAddressBook(db, ref)
   if (!book) throw new AppError(404, 'Address book not found')
-  const member = await requireMembership(db, userId, book.workspaceId)
-  if (write && !canWriteContacts(member.role)) {
+  const [member] = await db
+    .select()
+    .from(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, book.workspaceId), eq(workspaceMembers.userId, userId)))
+    .limit(1)
+  const [share] = await db
+    .select()
+    .from(addressBookMembers)
+    .where(and(eq(addressBookMembers.addressBookId, book.id), eq(addressBookMembers.userId, userId)))
+    .limit(1)
+  const role = member && share ? (roleAtLeast(share.role, member.role) ? share.role : member.role) : member?.role ?? share?.role
+  if (!role) throw new AppError(404, 'Address book not found')
+  if (write && !canWriteContacts(role)) {
     throw new AppError(403, 'You do not have permission to edit this address book')
   }
-  return { book, role: member.role }
+  return { book, role }
 }
 
 export async function defaultWritableWorkspace(db: Db, userId: string) {
