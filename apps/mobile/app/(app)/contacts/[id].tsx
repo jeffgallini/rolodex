@@ -5,7 +5,9 @@ import { Linking, Platform, StyleSheet, Text, View } from 'react-native'
 import { api, ApiError, type Contact } from '../../../src/api'
 import { useAuth } from '../../../src/auth'
 import { Loader } from '../../../src/logo'
+import { methodTitle } from '../../../src/methods'
 import { font, theme } from '../../../src/theme'
+import { ProfileCrm } from '../../../src/profile-crm'
 import { Button, Panel } from '../../../src/ui'
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000'
@@ -100,7 +102,7 @@ export default function ContactProfile() {
             style={styles.link}
             onPress={() => void Linking.openURL(method.kind === 'email' ? `mailto:${method.value}` : `tel:${method.value}`)}
           >
-            {method.label}: {method.value}
+            {methodTitle(method.label)}: {method.value}
           </Text>
         ))}
         {contact.addresses.map((address) => (
@@ -126,6 +128,7 @@ export default function ContactProfile() {
         {contact.interests ? <Text style={styles.body}>Interests: {contact.interests}</Text> : null}
         <Text style={styles.muted}>Card note is the only note copied to CardDAV. Private notes stay in Rolodex.</Text>
       </Panel>
+      {scope ? <ProfileCrm workspaceId={scope} contactId={contact.id} canWrite={canEdit || workspace?.role === 'owner' || workspace?.role === 'administrator' || workspace?.role === 'editor'} birthday={contact.birthday} /> : null}
     </View>
   )
 }

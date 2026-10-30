@@ -67,7 +67,9 @@ const PHONE_TYPES: Record<string, string> = {
   mobile: 'CELL',
   cell: 'CELL',
   home: 'HOME',
+  personal: 'HOME',
   work: 'WORK',
+  professional: 'WORK',
   fax: 'FAX',
   pager: 'PAGER',
   main: 'MAIN',
@@ -77,7 +79,9 @@ const PHONE_TYPES: Record<string, string> = {
 
 const EMAIL_TYPES: Record<string, string> = {
   home: 'HOME',
+  personal: 'HOME',
   work: 'WORK',
+  professional: 'WORK',
   other: 'OTHER',
 }
 

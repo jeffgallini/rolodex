@@ -7,6 +7,10 @@ import { font, theme } from '../../src/theme'
 
 const links = [
   { href: '/', label: 'Contacts' },
+  { href: '/households', label: 'Households' },
+  { href: '/organizations', label: 'Organizations' },
+  { href: '/activity', label: 'Activity' },
+  { href: '/tasks', label: 'Tasks' },
   { href: '/books', label: 'Address books' },
   { href: '/members', label: 'Members' },
   { href: '/settings', label: 'Settings' },
@@ -17,6 +21,8 @@ export default function AppLayout() {
   const path = usePathname()
   const router = useRouter()
   const wide = useWindowDimensions().width >= 880
+  const canManage = workspace?.role === 'owner' || workspace?.role === 'administrator'
+  const nav = [...links.slice(0, -1), ...(canManage ? [{ href: '/admin' as const, label: 'Admin' }] : []), links[links.length - 1]]
 
   if (!wide) {
     return (
@@ -34,7 +40,7 @@ export default function AppLayout() {
           <Text style={styles.brandText}>rolodex</Text>
         </Pressable>
         <View style={styles.links}>
-          {links.map((link) => {
+          {nav.map((link) => {
             const active = link.href === '/' ? path === '/' : path.startsWith(link.href)
             return (
               <Link key={link.href} href={link.href} style={[styles.link, active && styles.linkActive]}>

@@ -2,6 +2,8 @@ import { useRouter, usePathname } from 'expo-router'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { agendaLines } from './agenda'
+import { api, type Agenda } from './api'
 import { useAuth } from './auth'
 import { Icon } from './icons'
 import { RolodexMark } from './logo'
@@ -10,6 +12,10 @@ import { font, theme } from './theme'
 type Menu = 'notifications' | 'profile' | 'more' | null
 
 const moreLinks = [
+  { href: '/households', label: 'Households' },
+  { href: '/organizations', label: 'Organizations' },
+  { href: '/activity', label: 'Activity' },
+  { href: '/tasks', label: 'Tasks' },
   { href: '/books', label: 'Address books' },
   { href: '/members', label: 'Members' },
   { href: '/settings', label: 'Settings' },
@@ -17,16 +23,24 @@ const moreLinks = [
 
 export function MobileShell({ children }: { children: ReactNode }) {
   const { session, workspace, workspaces, selectWorkspace, signOut } = useAuth()
+  const canManage = workspace?.role === 'owner' || workspace?.role === 'administrator'
+  const menuLinks = [...moreLinks.slice(0, -1), ...(canManage ? [{ href: '/admin', label: 'Admin' }] : []), moreLinks[moreLinks.length - 1]]
   const router = useRouter()
   const path = usePathname()
   const insets = useSafeAreaInsets()
   const [menu, setMenu] = useState<Menu>(null)
+  const [agenda, setAgenda] = useState<Agenda | null>(null)
   const [shown, setShown] = useState(true)
   const lastY = useRef(0)
 
   useEffect(() => {
     setMenu(null)
   }, [path])
+
+  useEffect(() => {
+    if (menu !== 'notifications' || !workspace) return
+    api<Agenda>(`/api/workspaces/${workspace.id}/agenda`).then(setAgenda).catch(() => setAgenda({ dates: [], tasks: [], reminders: [] }))
+  }, [menu, workspace])
 
   function toggle(next: Menu) {
     setMenu((current) => (current === next ? null : next))
@@ -66,7 +80,11 @@ export function MobileShell({ children }: { children: ReactNode }) {
       {menu === 'notifications' ? (
         <View style={[styles.popover, styles.popoverRight, { top: 64 + insets.top + 8 }]}>
           <Text style={styles.popoverTitle}>Notifications</Text>
-          <Text style={styles.muted}>Nothing new.</Text>
+          {agenda && agendaLines(agenda).length ? agendaLines(agenda).map((line) => (
+            <Pressable key={line.key} onPress={() => router.push(line.href)} style={styles.row}>
+              <Text style={styles.rowText}>{line.label}</Text>
+            </Pressable>
+          )) : <Text style={styles.muted}>Nothing new.</Text>}
         </View>
       ) : null}
       {menu === 'profile' ? (
@@ -89,6 +107,18 @@ export function MobileShell({ children }: { children: ReactNode }) {
                 </Pressable>
               ))}
             </View>
+          ) : null}
+          {canManage ? (
+            <Pressable
+              onPress={() => {
+                setMenu(null)
+                router.push('/admin')
+              }}
+              style={styles.row}
+            >
+              <Icon name="settings" color={theme.text} size={18} />
+              <Text style={styles.rowText}>Admin</Text>
+            </Pressable>
           ) : null}
           <Pressable
             onPress={() => {
@@ -116,7 +146,7 @@ export function MobileShell({ children }: { children: ReactNode }) {
       </ScrollView>
       {menu === 'more' ? (
         <View style={[styles.popover, styles.morePopover, { bottom: 92 + insets.bottom }]}>
-          {moreLinks.map((link) => {
+          {menuLinks.map((link) => {
             const active = path.startsWith(link.href)
             return (
               <Pressable key={link.href} onPress={() => router.push(link.href)} style={styles.row}>

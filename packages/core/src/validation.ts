@@ -110,6 +110,101 @@ export const appPasswordSchema = z.object({
   label: z.string().trim().min(1).max(80),
 })
 
+export const relationshipCategories = ['family', 'personal', 'professional', 'commercial', 'social', 'custom'] as const
+
+export const relationshipSchema = z.object({
+  toContactId: z.string().uuid(),
+  category: z.enum(relationshipCategories),
+  type: z.string().trim().min(1).max(80),
+  description: optionalText(500),
+})
+
+const placeFields = {
+  street: optionalText(200),
+  city: optionalText(120),
+  region: optionalText(120),
+  postalCode: optionalText(40),
+  country: optionalText(120),
+}
+
+export const householdSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  ...placeFields,
+})
+
+export const householdMemberSchema = z.object({
+  contactId: z.string().uuid(),
+  role: optionalText(80),
+})
+
+export const organizationSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  industry: optionalText(200),
+  website: optionalText(500),
+  email: optionalText(200),
+  phone: optionalText(80),
+  ...placeFields,
+  notes: optionalText(4000),
+})
+
+export const organizationMemberSchema = z.object({
+  contactId: z.string().uuid(),
+  department: optionalText(120),
+  title: optionalText(120),
+  isPrimary: z.boolean().optional(),
+})
+
+export const noteSchema = z.object({
+  body: z.string().trim().min(1).max(8000),
+  visibility: z.enum(['private', 'workspace']).optional(),
+  contactId: z.string().uuid().nullish(),
+  householdId: z.string().uuid().nullish(),
+})
+
+export const activitySchema = z.object({
+  type: z.string().trim().min(1).max(40),
+  occurredAt: z.string().min(4).max(40),
+  description: optionalText(4000),
+  location: optionalText(200),
+  visibility: z.enum(['private', 'workspace']).optional(),
+  contactIds: z.array(z.string().uuid()).min(1).max(30),
+})
+
+export const taskSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  dueAt: z.string().min(4).max(40).nullish(),
+  contactId: z.string().uuid().nullish(),
+  activityId: z.string().uuid().nullish(),
+})
+
+export const reminderSchema = z.object({
+  type: z.string().trim().min(1).max(40),
+  remindAt: z.string().min(4).max(40),
+  recurrence: optionalText(40),
+  contactId: z.string().uuid().nullish(),
+  taskId: z.string().uuid().nullish(),
+})
+
+export const completeSchema = z.object({ completed: z.boolean() })
+
+export const customFieldSchema = z.object({
+  label: z.string().trim().min(1).max(80),
+  fieldType: z.enum(['text', 'number', 'date', 'boolean']),
+})
+
+export const customValueSchema = z.object({
+  value: z.union([z.string().max(4000), z.number(), z.boolean(), z.null()]),
+})
+
+export const mapSettingsSchema = z.object({
+  engine: z.enum(['leaflet', 'mapbox', 'maplibre']),
+  templateId: z.string().max(40).optional().default('osm'),
+  tileUrl: z.string().max(500).optional().default(''),
+  cartoKey: z.string().max(200).optional().default(''),
+  mapboxToken: z.string().max(300).optional().default(''),
+  googleKey: z.string().max(300).optional().default(''),
+})
+
 export function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
   const result = schema.safeParse(body)
   if (!result.success) {

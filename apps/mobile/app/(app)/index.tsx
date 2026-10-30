@@ -1,7 +1,8 @@
 import { useRouter } from 'expo-router'
 import { useEffect, useState } from 'react'
 import { Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native'
-import { api, type AddressBook, type ContactSummary } from '../../src/api'
+import { api, type AddressBook, type Agenda, type ContactSummary } from '../../src/api'
+import { AgendaStrip } from '../../src/agenda'
 import { useAuth } from '../../src/auth'
 import { Loader } from '../../src/logo'
 import { font, theme } from '../../src/theme'
@@ -19,11 +20,13 @@ export default function Contacts() {
   const [tags, setTags] = useState<{ id: string; name: string }[]>([])
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
+  const [agenda, setAgenda] = useState<Agenda | null>(null)
 
   useEffect(() => {
     if (!workspace) return
     api<AddressBook[]>(`/api/workspaces/${workspace.id}/address-books`).then(setBooks).catch((caught: Error) => setError(caught.message))
     api<{ id: string; name: string }[]>(`/api/workspaces/${workspace.id}/tags`).then(setTags).catch(() => setTags([]))
+    api<Agenda>(`/api/workspaces/${workspace.id}/agenda`).then(setAgenda).catch(() => setAgenda(null))
   }, [workspace])
 
   const selectedBook = books.find((book) => book.id === bookId)
@@ -64,10 +67,11 @@ export default function Contacts() {
         </View>
         <Button label="New contact" onPress={() => router.push('/contacts/new')} />
       </View>
+      <AgendaStrip agenda={agenda} />
       <TextInput
         value={q}
         onChangeText={setQ}
-        placeholder="Search name, email, phone, or tag"
+        placeholder="Search people, companies, notes, or birthdays"
         placeholderTextColor={theme.muted}
         style={styles.search}
       />

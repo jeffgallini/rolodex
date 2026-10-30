@@ -67,7 +67,15 @@ export async function listContacts(
       ilike(contacts.cardNote, pattern),
       sql`exists (select 1 from contact_methods m where m.contact_id = ${contacts.id} and (m.value ilike ${pattern} or m.normalized_value ilike ${pattern}))`,
       sql`exists (select 1 from contact_tags ct join tags t on t.id = ct.tag_id where ct.contact_id = ${contacts.id} and t.name ilike ${pattern})`,
+      sql`exists (select 1 from organization_memberships om join organizations o on o.id = om.organization_id where om.contact_id = ${contacts.id} and o.deleted_at is null and o.name ilike ${pattern})`,
+      sql`exists (select 1 from relationships r where r.workspace_id = ${workspaceId} and (r.from_contact_id = ${contacts.id} or r.to_contact_id = ${contacts.id}) and (r.type ilike ${pattern} or r.category ilike ${pattern}))`,
+      sql`exists (select 1 from notes n where n.contact_id = ${contacts.id} and n.deleted_at is null and n.body ilike ${pattern} and (n.visibility = 'workspace' or n.author_id = ${userId}))`,
+      sql`exists (select 1 from activity_contacts ac join activities a on a.id = ac.activity_id where ac.contact_id = ${contacts.id} and a.deleted_at is null and (coalesce(a.description, '') ilike ${pattern} or a.type ilike ${pattern}) and (a.visibility = 'workspace' or a.created_by = ${userId}))`,
+      sql`exists (select 1 from tasks t where t.contact_id = ${contacts.id} and t.deleted_at is null and t.title ilike ${pattern})`,
     ]
+    if (/^birthdays?$/i.test(q)) {
+      search.push(sql`${contacts.birthday} is not null and extract(month from ${contacts.birthday}) = extract(month from current_date)`)
+    }
     if (tsQuery) {
       search.push(
         sql`to_tsvector('english', coalesce(${contacts.displayName}, '') || ' ' || coalesce(${contacts.organizationName}, '') || ' ' || coalesce(${contacts.cardNote}, '')) @@ plainto_tsquery('english', ${tsQuery})`,

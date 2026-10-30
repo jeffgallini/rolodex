@@ -2,39 +2,91 @@ import { spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
-  addMember,
+  addHouseholdMember,
+  addOrganizationMember,
+  agenda,
   addressBookSchema,
   contactSchema,
+  contactHouseholds,
+  contactOrganizations,
+  completeTask,
+  completeSchema,
+  createActivity,
   createAddressBook,
   createContact,
+  createCustomField,
+  createHousehold,
+  createNote,
+  createOrganization,
+  createRelationship,
+  createReminder,
   createTag,
+  createTask,
   createWorkspace,
+  customFieldSchema,
+  customValueSchema,
+  deleteActivity,
   deleteAddressBook,
   deleteContact,
+  deleteHousehold,
+  deleteNote,
+  deleteOrganization,
+  deleteRelationship,
+  deleteTask,
   exportAddressBook,
   getContact,
+  getMapSettings,
+  householdMemberSchema,
+  householdSchema,
   importAddressBook,
   importSchema,
+  listActivities,
   listAddressBooks,
   listBookShares,
   listContacts,
+  listCustomFields,
+  listHouseholds,
   listMembers,
+  listHouseholdNotes,
+  listNotes,
+  listOrganizations,
+  listRelationships,
   listTags,
+  listTasks,
   listWorkspaces,
+  mapSettingsSchema,
   memberRoleSchema,
   memberSchema,
+  noteSchema,
+  organizationMemberSchema,
+  organizationMembers,
+  organizationSchema,
   parseBody,
   placeDetails,
   placeProviders,
+  relationshipSchema,
+  reminderSchema,
+  reverseWorkspacePlace,
+  removeHouseholdMember,
+  removeOrganizationMember,
   searchPlaces,
+  searchWorkspacePlaces,
+  activitySchema,
+  addMember,
   removeMember,
   setContactPhoto,
+  setCustomValue,
   shareAddressBook,
   tagSchema,
+  taskSchema,
   updateAddressBook,
   updateContact,
+  updateHousehold,
+  updateOrganization,
+  updateMapSettings,
   unshareAddressBook,
   updateMemberRole,
+  workspacePlaceDetails,
   workspaceSchema,
   AppError,
   createRateLimiter,
@@ -50,6 +102,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   Res,
@@ -258,6 +311,237 @@ export class DataController {
   @Get('places/google/:placeId')
   googlePlace(@Param('placeId') placeId: string) {
     return placeDetails('google', placeId)
+  }
+
+  @Get('workspaces/:workspaceId/map')
+  mapSettings(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string) {
+    return getMapSettings(this.db, req.user.id, workspaceId)
+  }
+
+  @Put('workspaces/:workspaceId/map')
+  saveMap(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    const input = parseBody(mapSettingsSchema, body)
+    return updateMapSettings(this.db, req.user.id, workspaceId, {
+      engine: input.engine,
+      templateId: input.templateId ?? 'osm',
+      tileUrl: input.tileUrl ?? '',
+      cartoKey: input.cartoKey ?? '',
+      mapboxToken: input.mapboxToken ?? '',
+      googleKey: input.googleKey ?? '',
+    })
+  }
+
+  @Get('workspaces/:workspaceId/places')
+  workspacePlaces(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Query('q') q = '') {
+    if (!placeLimiter(req.user.id)) throw new AppError(429, 'Too many address searches. Wait a moment.')
+    return searchWorkspacePlaces(this.db, req.user.id, workspaceId, q)
+  }
+
+  @Get('workspaces/:workspaceId/places/details')
+  workspacePlace(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Query('id') id = '') {
+    if (!placeLimiter(req.user.id)) throw new AppError(429, 'Too many address searches. Wait a moment.')
+    return workspacePlaceDetails(this.db, req.user.id, workspaceId, id)
+  }
+
+  @Get('workspaces/:workspaceId/places/reverse')
+  reversePlace(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Query('lat') lat = '', @Query('lon') lon = '') {
+    if (!placeLimiter(req.user.id)) throw new AppError(429, 'Too many address searches. Wait a moment.')
+    return reverseWorkspacePlace(this.db, req.user.id, workspaceId, Number(lat), Number(lon))
+  }
+
+  @Get('workspaces/:workspaceId/agenda')
+  workspaceAgenda(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string) {
+    return agenda(this.db, req.user.id, workspaceId)
+  }
+
+  @Get('workspaces/:workspaceId/contacts/:contactId/relationships')
+  relationships(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string) {
+    return listRelationships(this.db, req.user.id, workspaceId, contactId)
+  }
+
+  @Post('workspaces/:workspaceId/contacts/:contactId/relationships')
+  addRelationship(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string, @Body() body: unknown) {
+    return createRelationship(this.db, req.user.id, workspaceId, contactId, parseBody(relationshipSchema, body))
+  }
+
+  @Delete('workspaces/:workspaceId/relationships/:relationshipId')
+  async removeRelationship(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('relationshipId') relationshipId: string) {
+    await deleteRelationship(this.db, req.user.id, workspaceId, relationshipId)
+    return { ok: true }
+  }
+
+  @Get('workspaces/:workspaceId/households')
+  households(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string) {
+    return listHouseholds(this.db, req.user.id, workspaceId)
+  }
+
+  @Post('workspaces/:workspaceId/households')
+  addHousehold(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    return createHousehold(this.db, req.user.id, workspaceId, parseBody(householdSchema, body))
+  }
+
+  @Patch('workspaces/:workspaceId/households/:householdId')
+  editHousehold(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('householdId') householdId: string, @Body() body: unknown) {
+    return updateHousehold(this.db, req.user.id, workspaceId, householdId, parseBody(householdSchema, body))
+  }
+
+  @Delete('workspaces/:workspaceId/households/:householdId')
+  async removeHousehold(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('householdId') householdId: string) {
+    await deleteHousehold(this.db, req.user.id, workspaceId, householdId)
+    return { ok: true }
+  }
+
+  @Post('workspaces/:workspaceId/households/:householdId/members')
+  addToHousehold(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('householdId') householdId: string, @Body() body: unknown) {
+    return addHouseholdMember(this.db, req.user.id, workspaceId, householdId, parseBody(householdMemberSchema, body))
+  }
+
+  @Delete('workspaces/:workspaceId/households/:householdId/members/:contactId')
+  async removeFromHousehold(
+    @Req() req: AuthedRequest,
+    @Param('workspaceId') workspaceId: string,
+    @Param('householdId') householdId: string,
+    @Param('contactId') contactId: string,
+  ) {
+    await removeHouseholdMember(this.db, req.user.id, workspaceId, householdId, contactId)
+    return { ok: true }
+  }
+
+  @Get('workspaces/:workspaceId/contacts/:contactId/households')
+  personHouseholds(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string) {
+    return contactHouseholds(this.db, req.user.id, workspaceId, contactId)
+  }
+
+  @Get('workspaces/:workspaceId/organizations')
+  organizations(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string) {
+    return listOrganizations(this.db, req.user.id, workspaceId)
+  }
+
+  @Post('workspaces/:workspaceId/organizations')
+  addOrganization(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    return createOrganization(this.db, req.user.id, workspaceId, parseBody(organizationSchema, body))
+  }
+
+  @Patch('workspaces/:workspaceId/organizations/:organizationId')
+  editOrganization(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('organizationId') organizationId: string, @Body() body: unknown) {
+    return updateOrganization(this.db, req.user.id, workspaceId, organizationId, parseBody(organizationSchema, body))
+  }
+
+  @Delete('workspaces/:workspaceId/organizations/:organizationId')
+  async removeOrganization(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('organizationId') organizationId: string) {
+    await deleteOrganization(this.db, req.user.id, workspaceId, organizationId)
+    return { ok: true }
+  }
+
+  @Get('workspaces/:workspaceId/organizations/:organizationId/members')
+  orgMembers(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('organizationId') organizationId: string) {
+    return organizationMembers(this.db, req.user.id, workspaceId, organizationId)
+  }
+
+  @Post('workspaces/:workspaceId/organizations/:organizationId/members')
+  addToOrganization(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('organizationId') organizationId: string, @Body() body: unknown) {
+    return addOrganizationMember(this.db, req.user.id, workspaceId, organizationId, parseBody(organizationMemberSchema, body))
+  }
+
+  @Delete('workspaces/:workspaceId/organizations/:organizationId/members/:contactId')
+  async removeFromOrganization(
+    @Req() req: AuthedRequest,
+    @Param('workspaceId') workspaceId: string,
+    @Param('organizationId') organizationId: string,
+    @Param('contactId') contactId: string,
+  ) {
+    await removeOrganizationMember(this.db, req.user.id, workspaceId, organizationId, contactId)
+    return { ok: true }
+  }
+
+  @Get('workspaces/:workspaceId/contacts/:contactId/organizations')
+  personOrganizations(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string) {
+    return contactOrganizations(this.db, req.user.id, workspaceId, contactId)
+  }
+
+  @Get('workspaces/:workspaceId/contacts/:contactId/notes')
+  notes(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string) {
+    return listNotes(this.db, req.user.id, workspaceId, contactId)
+  }
+
+  @Get('workspaces/:workspaceId/households/:householdId/notes')
+  householdNotes(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('householdId') householdId: string) {
+    return listHouseholdNotes(this.db, req.user.id, workspaceId, householdId)
+  }
+
+  @Post('workspaces/:workspaceId/notes')
+  addNote(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    return createNote(this.db, req.user.id, workspaceId, parseBody(noteSchema, body))
+  }
+
+  @Delete('workspaces/:workspaceId/notes/:noteId')
+  async removeNote(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('noteId') noteId: string) {
+    await deleteNote(this.db, req.user.id, workspaceId, noteId)
+    return { ok: true }
+  }
+
+  @Get('workspaces/:workspaceId/activities')
+  activities(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Query('contactId') contactId?: string) {
+    return listActivities(this.db, req.user.id, workspaceId, contactId)
+  }
+
+  @Post('workspaces/:workspaceId/activities')
+  addActivity(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    return createActivity(this.db, req.user.id, workspaceId, parseBody(activitySchema, body))
+  }
+
+  @Delete('workspaces/:workspaceId/activities/:activityId')
+  async removeActivity(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('activityId') activityId: string) {
+    await deleteActivity(this.db, req.user.id, workspaceId, activityId)
+    return { ok: true }
+  }
+
+  @Get('workspaces/:workspaceId/tasks')
+  tasks(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Query('contactId') contactId?: string) {
+    return listTasks(this.db, req.user.id, workspaceId, contactId)
+  }
+
+  @Post('workspaces/:workspaceId/tasks')
+  addTask(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    return createTask(this.db, req.user.id, workspaceId, parseBody(taskSchema, body))
+  }
+
+  @Post('workspaces/:workspaceId/tasks/:taskId/complete')
+  finishTask(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('taskId') taskId: string, @Body() body: unknown) {
+    const input = parseBody(completeSchema, body)
+    return completeTask(this.db, req.user.id, workspaceId, taskId, input.completed)
+  }
+
+  @Delete('workspaces/:workspaceId/tasks/:taskId')
+  async removeTask(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('taskId') taskId: string) {
+    await deleteTask(this.db, req.user.id, workspaceId, taskId)
+    return { ok: true }
+  }
+
+  @Post('workspaces/:workspaceId/reminders')
+  addReminder(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    return createReminder(this.db, req.user.id, workspaceId, parseBody(reminderSchema, body))
+  }
+
+  @Get('workspaces/:workspaceId/contacts/:contactId/fields')
+  fields(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string) {
+    return listCustomFields(this.db, req.user.id, workspaceId, contactId)
+  }
+
+  @Post('workspaces/:workspaceId/fields')
+  addField(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    return createCustomField(this.db, req.user.id, workspaceId, parseBody(customFieldSchema, body))
+  }
+
+  @Put('workspaces/:workspaceId/contacts/:contactId/fields/:definitionId')
+  saveField(
+    @Req() req: AuthedRequest,
+    @Param('workspaceId') workspaceId: string,
+    @Param('contactId') contactId: string,
+    @Param('definitionId') definitionId: string,
+    @Body() body: unknown,
+  ) {
+    return setCustomValue(this.db, req.user.id, workspaceId, contactId, definitionId, parseBody(customValueSchema, body))
   }
 
   @Get('workspaces/:workspaceId/address-books')
