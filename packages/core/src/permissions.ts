@@ -1,4 +1,4 @@
-import type { WorkspaceRole } from '@rolodex/db'
+import type { ContactGrantRole, WorkspaceRole } from '@rolodex/db'
 
 const rank: Record<WorkspaceRole, number> = {
   viewer: 0,
@@ -18,4 +18,28 @@ export function canWriteContacts(role: WorkspaceRole) {
 
 export function canManageMembers(role: WorkspaceRole) {
   return roleAtLeast(role, 'administrator')
+}
+
+export function decideContactAccess(input: {
+  visibility: string
+  ownerId: string | null
+  userId: string
+  workspaceRole: WorkspaceRole | null
+  grant: ContactGrantRole | null
+  bookRole: WorkspaceRole | null
+}) {
+  const manage =
+    input.ownerId === input.userId || input.workspaceRole === 'owner' || input.workspaceRole === 'administrator'
+  if (input.visibility === 'restricted') {
+    return {
+      read: manage || input.grant != null,
+      write: manage || input.grant === 'editor',
+      manage,
+    }
+  }
+  const read = input.workspaceRole != null || input.bookRole != null
+  const write =
+    (input.workspaceRole != null && canWriteContacts(input.workspaceRole)) ||
+    (input.bookRole != null && canWriteContacts(input.bookRole))
+  return { read, write, manage }
 }

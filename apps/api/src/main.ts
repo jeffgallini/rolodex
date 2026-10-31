@@ -1,7 +1,7 @@
 import 'reflect-metadata'
 import { Module } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
-import { loadEnv, syncDueImmich } from '@rolodex/core'
+import { dispatchDueNotifications, loadEnv, syncDueImmich } from '@rolodex/core'
 import { createDb } from '@rolodex/db'
 import { AuthController } from './auth.controller'
 import { DataController } from './data.controller'
@@ -54,6 +54,13 @@ async function main() {
   }
   syncImmich()
   setInterval(syncImmich, 30 * 60 * 1000)
+  const dispatchNotifications = () => {
+    void dispatchDueNotifications(database).catch((error: unknown) => {
+      console.warn(error instanceof Error ? error.message : 'Notification dispatch failed')
+    })
+  }
+  dispatchNotifications()
+  setInterval(dispatchNotifications, 5 * 60 * 1000)
 }
 
 void main()

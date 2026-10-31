@@ -1,4 +1,4 @@
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000'
+export const apiUrl = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000'
 
 export class ApiError extends Error {
   status: number
@@ -24,7 +24,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   if (token) headers.set('Authorization', `Bearer ${token}`)
   const isForm = typeof FormData !== 'undefined' && options.body instanceof FormData
   if (options.body && !isForm && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
-  const response = await fetch(`${API_URL}${path}`, { ...options, headers, credentials: 'include' })
+  const response = await fetch(`${apiUrl}${path}`, { ...options, headers, credentials: 'include' })
   if (response.status === 401 && !path.startsWith('/api/auth/login') && !path.startsWith('/api/auth/register')) {
     onUnauthorized()
     throw new ApiError('Sign in required', 401)
@@ -61,6 +61,7 @@ export type ContactSummary = {
   country: string | null
   lat: number | null
   lon: number | null
+  visibility: string
   tags: { id: string; name: string }[]
   addressBooks: { id: string; name: string }[]
 }
@@ -116,7 +117,14 @@ export type MapSettings = {
   mapboxToken: string
   googleKey: string
 }
-export type Member = { userId: string; email: string; displayName: string; role: string }
+export type Member = { userId: string; email: string; displayName: string; role: string; contactCount?: number }
+
+export type WorkspaceGroup = {
+  id: string
+  name: string
+  minRole: 'viewer' | 'editor'
+  members: { userId: string; displayName: string; email: string }[]
+}
 export type AppPassword = { id: string; label: string; createdAt: string; lastUsedAt: string | null }
 export type Relationship = { id: string; category: string; type: string; description: string | null; contactId: string; displayName: string }
 export type RelationshipType = { id: string; label: string; reciprocalLabel: string }
@@ -133,7 +141,8 @@ export type Activity = {
   visibility: string
   people: { contactId: string; displayName: string }[]
 }
-export type Task = { id: string; title: string; dueAt: string | null; completedAt: string | null; contactId: string | null }
+export type Task = { id: string; title: string; visibility: string; dueAt: string | null; completedAt: string | null; contactId: string | null }
+export type AuditEvent = { id: string; action: string; entityType: string; entityId: string | null; actorName: string; createdAt: string }
 export type CustomField = { id: string; label: string; fieldType: string; value: string | number | boolean | null }
 export type ImmichInstance = {
   id: string
@@ -176,6 +185,48 @@ export type Agenda = {
   tasks: Task[]
   reminders: { id: string; type: string; remindAt: string; contactId: string | null }[]
   reachOuts: { contactId: string; displayName: string; daysSince: number | null; label: string }[]
+}
+
+export type OauthSettings = {
+  enabled: boolean
+  issuerUrl: string
+  clientId: string
+  clientSecret: string
+  tokenEndpointAuthMethod: 'client_secret_post' | 'client_secret_basic' | 'none'
+  scope: string
+  idTokenSignedResponseAlg: 'RS256' | 'ES256' | 'HS256'
+  userinfoSignedResponseAlg: 'none' | 'RS256' | 'ES256'
+  prompt: string
+  endSessionEndpoint: string
+  requestTimeoutMs: number
+  allowInsecureRequests: boolean
+  nameClaim: string
+  roleClaim: string
+  buttonText: string
+  accountManagementUrl: string
+  autoRegister: boolean
+  autoLaunch: boolean
+  appUrl: string
+  publicUrl: string
+  mobileRedirectOverride: boolean
+  mobileRedirectUri: string
+  redirectUri: string
+}
+
+export type NotificationSettings = {
+  appUrl: string
+  email: {
+    enabled: boolean
+    host: string
+    port: number
+    username: string
+    password: string
+    secure: boolean
+    ignoreCertificateErrors: boolean
+    from: string
+  }
+  push: { enabled: boolean; subject: string; publicKey: string }
+  webhook: { enabled: boolean; url: string; secret: string }
 }
 
 export function send<T>(path: string, method: string, body?: unknown) {

@@ -1,8 +1,10 @@
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useState } from 'react'
-import { Text } from 'react-native'
+import { Text, View } from 'react-native'
 import { api, type Contact } from '../../../../src/api'
 import { ContactForm } from '../../../../src/ContactForm'
+import { ImportantDates } from '../../../../src/contact-overview'
+import { ProfileCrm } from '../../../../src/profile-crm'
 import { useAuth } from '../../../../src/auth'
 import { Loader } from '../../../../src/logo'
 import { font, theme } from '../../../../src/theme'
@@ -21,9 +23,21 @@ export default function EditContact() {
 
   if (!contact) return <Loader />
   return (
-    <>
+    <View style={{ gap: 16 }}>
       <Text style={{ fontFamily: font, fontSize: 28, fontWeight: '700', color: theme.text }}>Edit {contact.displayName}</Text>
       <ContactForm contact={contact} onSaved={(savedId) => router.replace(`/contacts/${savedId}?workspace=${scope}`)} />
-    </>
+      {scope ? <ImportantDates workspaceId={scope} contactId={contact.id} /> : null}
+      {scope ? (
+        <ProfileCrm
+          workspaceId={scope}
+          contactId={contact.id}
+          canWrite
+          editorsOnly
+          birthday={contact.birthday}
+          followUpFrequency={contact.followUpFrequency}
+          lastInteractionAt={contact.lastInteractionAt}
+        />
+      ) : null}
+    </View>
   )
 }

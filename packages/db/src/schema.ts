@@ -19,6 +19,9 @@ import {
 export const workspaceRoles = ['owner', 'administrator', 'editor', 'contributor', 'viewer'] as const
 export type WorkspaceRole = (typeof workspaceRoles)[number]
 
+export const contactGrantRoles = ['viewer', 'editor'] as const
+export type ContactGrantRole = (typeof contactGrantRoles)[number]
+
 export const contactTypes = [
   'individual',
   'organization',
@@ -146,6 +149,98 @@ export const contacts = pgTable(
     index('contacts_active_idx').on(table.workspaceId).where(sql`deleted_at is null`),
   ],
 )
+
+export const contactGrants = pgTable(
+  'contact_grants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    contactId: uuid('contact_id')
+      .notNull()
+      .references(() => contacts.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    role: text('role').$type<ContactGrantRole>().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('contact_grant_idx').on(table.contactId, table.userId)],
+)
+
+export const userGroups = pgTable(
+  'user_groups',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    minRole: text('min_role').$type<ContactGrantRole>().notNull().default('viewer'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('user_group_name_idx').on(table.workspaceId, table.name)],
+)
+
+export const workspaceInvites = pgTable('workspace_invites', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  workspaceId: uuid('workspace_id')
+    .notNull()
+    .references(() => workspaces.id, { onDelete: 'cascade' }),
+  email: text('email').notNull(),
+  role: text('role').$type<WorkspaceRole>().notNull(),
+  tokenHash: text('token_hash').notNull().unique(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const passwordResets = pgTable('password_resets', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull().unique(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const userGroupMembers = pgTable(
+  'user_group_members',
+  {
+    groupId: uuid('group_id')
+      .notNull()
+      .references(() => userGroups.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+  },
+  (table) => [primaryKey({ columns: [table.groupId, table.userId] })],
+)
+
+export const contactGroupGrants = pgTable(
+  'contact_group_grants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    contactId: uuid('contact_id')
+      .notNull()
+      .references(() => contacts.id, { onDelete: 'cascade' }),
+    groupId: uuid('group_id')
+      .notNull()
+      .references(() => userGroups.id, { onDelete: 'cascade' }),
+    role: text('role').$type<ContactGrantRole>().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('contact_group_grant_idx').on(table.contactId, table.groupId)],
+)
+
+export const contactDates = pgTable('contact_dates', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  contactId: uuid('contact_id')
+    .notNull()
+    .references(() => contacts.id, { onDelete: 'cascade' }),
+  label: text('label').notNull(),
+  occursOn: date('occurs_on').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
 
 export const contactMethods = pgTable(
   'contact_methods',
@@ -470,6 +565,7 @@ export const tasks = pgTable('tasks', {
     .notNull()
     .references(() => workspaces.id, { onDelete: 'cascade' }),
   title: text('title').notNull(),
+  visibility: text('visibility').notNull().default('workspace'),
   dueAt: timestamp('due_at', { withTimezone: true }),
   completedAt: timestamp('completed_at', { withTimezone: true }),
   assigneeId: uuid('assignee_id').references(() => users.id, { onDelete: 'set null' }),
@@ -638,6 +734,73 @@ export const syncJobs = pgTable('sync_jobs', {
   error: text('error'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
+
+export const serverSettings = pgTable('server_settings', {
+  key: text('key').primaryKey(),
+  settings: jsonb('settings').notNull().default({}),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const serverSecrets = pgTable('server_secrets', {
+  key: text('key').primaryKey(),
+  ciphertext: text('ciphertext').notNull(),
+  nonce: text('nonce').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const oauthAccounts = pgTable(
+  'oauth_accounts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    issuer: text('issuer').notNull(),
+    subject: text('subject').notNull(),
+    email: text('email'),
+    role: text('role'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('oauth_account_idx').on(table.issuer, table.subject)],
+)
+
+export const oauthStates = pgTable('oauth_states', {
+  state: text('state').primaryKey(),
+  nonce: text('nonce').notNull(),
+  verifier: text('verifier').notNull(),
+  redirectUri: text('redirect_uri').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const oauthExchanges = pgTable('oauth_exchanges', {
+  codeHash: text('code_hash').primaryKey(),
+  ciphertext: text('ciphertext').notNull(),
+  nonce: text('nonce').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+})
+
+export const pushSubscriptions = pgTable('push_subscriptions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  endpoint: text('endpoint').notNull().unique(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const notificationDeliveries = pgTable(
+  'notification_deliveries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    channel: text('channel').notNull(),
+    dedupeKey: text('dedupe_key').notNull(),
+    sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('notification_delivery_idx').on(table.channel, table.dedupeKey)],
+)
 
 export const auditLogs = pgTable(
   'audit_logs',

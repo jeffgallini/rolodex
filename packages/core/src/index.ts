@@ -1,8 +1,12 @@
 export { AppError } from './errors'
 export { roleAtLeast, canWriteContacts, canManageMembers } from './permissions'
 export { encryptSecret, decryptSecret, etagMatches, makeEtag } from './secrets'
-export { registerUser, loginUser, logoutUser, userForSession, createAppPassword, listAppPasswords, revokeAppPassword, authenticateAppPassword, publicUser, type PublicUser } from './auth'
+export { registerUser, loginUser, logoutUser, userForSession, createOauthUser, openSession, createAppPassword, listAppPasswords, revokeAppPassword, authenticateAppPassword, publicUser, type PublicUser } from './auth'
+export { getOauthSettings, setOauthSettings, publicOauth, unlinkOauthAccounts, beginOauth, finishOauth, exchangeOauthCode } from './oauth'
+export { getNotificationSettings, setNotificationSettings, pushPublic, savePushSubscription, deletePushSubscription, sendNotificationTest, dispatchDueNotifications, publicAppUrl, sendAccountEmail } from './notify'
 export { createWorkspace, listWorkspaces, listMembers, addMember, updateMemberRole, removeMember } from './workspaces'
+export { listUserGroups, createUserGroup, updateUserGroup, deleteUserGroup, addUserGroupMember, removeUserGroupMember } from './groups'
+export { registrationPolicy, setRegistrationPolicy, inviteUser, previewInvite, acceptInvite, sendPasswordReset, resetPassword } from './invites'
 export {
   listContacts,
   locateContact,
@@ -19,6 +23,17 @@ export {
   listLiveCards,
   syncCollection,
   displayNameOf,
+  contactAccess,
+  setContactVisibility,
+  setContactOwner,
+  grantContact,
+  grantContactGroup,
+  revokeContactGrant,
+  revokeContactGroupGrant,
+  listContactDates,
+  addContactDate,
+  deleteContactDate,
+  listAudit,
 } from './contacts'
 export {
   createAddressBook,
@@ -86,7 +101,7 @@ export {
   setCustomValue,
   agenda,
 } from './crm'
-export { parseBody, registerSchema, loginSchema, workspaceSchema, memberSchema, memberRoleSchema, addressBookSchema, tagSchema, contactSchema, importSchema, appPasswordSchema, relationshipSchema, relationshipTypeSchema, organizationSchema, organizationMemberSchema, noteSchema, activitySchema, taskSchema, reminderSchema, completeSchema, customFieldSchema, customValueSchema, mapSettingsSchema, addressLocationSchema, addonSchema, immichInstanceSchema, immichTestSchema, immichLinkSchema, immichPhotoSchema, immichAssetSchema } from './validation'
+export { parseBody, registerSchema, passwordResetSchema, registrationPolicySchema, loginSchema, workspaceSchema, memberSchema, memberRoleSchema, addressBookSchema, tagSchema, contactSchema, importSchema, appPasswordSchema, relationshipSchema, relationshipTypeSchema, organizationSchema, organizationMemberSchema, noteSchema, activitySchema, taskSchema, reminderSchema, completeSchema, customFieldSchema, customValueSchema, mapSettingsSchema, addressLocationSchema, addonSchema, immichInstanceSchema, immichTestSchema, immichLinkSchema, immichPhotoSchema, immichAssetSchema, contactVisibilitySchema, contactOwnerSchema, contactGrantSchema, userGroupSchema, userGroupUpdateSchema, userGroupMemberSchema, contactDateSchema, oauthSettingsSchema, notificationSettingsSchema, notificationTestSchema, pushSubscriptionSchema, oauthExchangeSchema } from './validation'
 export { parseVcards, serializeVcard } from './vcard'
 export { createRateLimiter } from './rate-limit'
 export { loadEnv } from './env'

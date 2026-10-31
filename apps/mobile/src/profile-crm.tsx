@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import { useRouter } from 'expo-router'
 import { useEffect, useState } from 'react'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
@@ -24,6 +25,7 @@ export function ProfileCrm({
   birthday,
   followUpFrequency,
   lastInteractionAt,
+  editorsOnly = false,
 }: {
   workspaceId: string
   contactId: string
@@ -31,6 +33,7 @@ export function ProfileCrm({
   birthday: string | null
   followUpFrequency: string | null
   lastInteractionAt: string | null
+  editorsOnly?: boolean
 }) {
   const router = useRouter()
   const [error, setError] = useState('')
@@ -43,6 +46,7 @@ export function ProfileCrm({
   const [relationKey, setRelationKey] = useState('')
   const [person, setPerson] = useState('')
   const [taskTitle, setTaskTitle] = useState('')
+  const [taskShared, setTaskShared] = useState(true)
   const [taskDue, setTaskDue] = useState('')
   const [orgId, setOrgId] = useState('')
   const [orgTitle, setOrgTitle] = useState('')
@@ -106,7 +110,7 @@ export function ProfileCrm({
   return (
     <View style={styles.stack}>
       {error ? <Notice text={error} /> : null}
-      <Panel>
+      {editorsOnly ? null : <Panel>
         <Text style={styles.section}>Stay in touch</Text>
         {cadence ? (
           <Text style={[styles.body, due && styles.due]}>
@@ -115,7 +119,8 @@ export function ProfileCrm({
         ) : (
           <Text style={styles.meta}>No cadence yet. Set one when you edit this contact.</Text>
         )}
-      </Panel>
+      </Panel>}
+      {editorsOnly ? <Fragment>
       <Panel>
         <Text style={styles.section}>Relationships</Text>
         {links.map((link) => (
@@ -188,11 +193,13 @@ export function ProfileCrm({
           </View>
         ) : null}
       </Panel>
+      </Fragment> : null}
+      {editorsOnly ? null : <Fragment>
       <Panel>
         <Text style={styles.section}>Tasks</Text>
         {tasks.filter((task) => !task.completedAt).map((task) => (
           <View key={task.id} style={styles.row}>
-            <Text style={styles.body}>{task.title}{task.dueAt ? ` · ${task.dueAt.slice(0, 10)}` : ''}</Text>
+            <Text style={styles.body}>{task.title}{task.dueAt ? ` · ${task.dueAt.slice(0, 10)}` : ''} · {task.visibility === 'private' ? 'private' : 'shared'}</Text>
             {canWrite ? <Button label="Done" tone="ghost" onPress={() => void run(() => send(`/api/workspaces/${workspaceId}/tasks/${task.id}/complete`, 'POST', { completed: true }))} /> : null}
           </View>
         ))}
@@ -200,11 +207,12 @@ export function ProfileCrm({
           <View style={styles.form}>
             <Field label="Task" value={taskTitle} onChangeText={setTaskTitle} />
             <Field label="Due date" value={taskDue} onChangeText={setTaskDue} placeholder="YYYY-MM-DD" />
+            <Choice label={taskShared ? 'Shared with the workspace' : 'Private'} on={taskShared} onPress={() => setTaskShared((current) => !current)} />
             <Button
               label="Add task"
               disabled={!taskTitle.trim()}
               onPress={() => void run(async () => {
-                await send(`/api/workspaces/${workspaceId}/tasks`, 'POST', { title: taskTitle.trim(), dueAt: taskDue || null, contactId })
+                await send(`/api/workspaces/${workspaceId}/tasks`, 'POST', { title: taskTitle.trim(), dueAt: taskDue || null, contactId, visibility: taskShared ? 'workspace' : 'private' })
                 setTaskTitle('')
                 setTaskDue('')
               })}
@@ -252,6 +260,7 @@ export function ProfileCrm({
           </View>
         ) : null}
       </Panel>
+      </Fragment>}
     </View>
   )
 }

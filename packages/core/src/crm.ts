@@ -13,10 +13,10 @@ import {
   tasks,
   type Database,
 } from '@rolodex/db'
-import { and, asc, desc, eq, inArray, isNull, lte, or } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm'
 import type { z } from 'zod'
 import { requireManager, requireMembership, requireWriter, type Db } from './access'
-import { getContact } from './contacts'
+import { getContact, requireContactWrite, visibleContactSql, writeAudit } from './contacts'
 import { AppError } from './errors'
 import { organizationLogoUrl } from './organization-logo'
 import {
@@ -269,12 +269,12 @@ export async function listNotes(db: Database, userId: string, workspaceId: strin
 }
 
 export async function createNote(db: Database, userId: string, workspaceId: string, input: z.infer<typeof noteSchema>) {
-  await writer(db, userId, workspaceId)
-  await getContact(db, userId, workspaceId, input.contactId)
+  await requireContactWrite(db, userId, workspaceId, input.contactId)
   const [row] = await db
     .insert(notes)
     .values({ workspaceId, contactId: input.contactId, authorId: userId, body: input.body.trim(), visibility: input.visibility ?? 'private' })
     .returning()
+  await writeAudit(db, workspaceId, userId, 'note.create', input.contactId, 'note')
   return presentNote(row!)
 }
 
@@ -283,7 +283,10 @@ export async function deleteNote(db: Database, userId: string, workspaceId: stri
   const [row] = await db.select().from(notes).where(and(eq(notes.id, noteId), eq(notes.workspaceId, workspaceId), isNull(notes.deletedAt))).limit(1)
   if (!row) throw new AppError(404, 'Note not found')
   if (row.visibility === 'private' && row.authorId !== userId) throw new AppError(404, 'Note not found')
+  if (row.contactId) await requireContactWrite(db, userId, workspaceId, row.contactId)
+  else await writer(db, userId, workspaceId)
   await db.update(notes).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(notes.id, row.id))
+  if (row.contactId) await writeAudit(db, workspaceId, userId, 'note.delete', row.contactId, 'note')
 }
 
 export async function listActivities(db: Database, userId: string, workspaceId: string, contactId?: string) {
@@ -307,8 +310,7 @@ export async function listActivities(db: Database, userId: string, workspaceId: 
 }
 
 export async function createActivity(db: Database, userId: string, workspaceId: string, input: z.infer<typeof activitySchema>) {
-  await writer(db, userId, workspaceId)
-  for (const contactId of input.contactIds) await getContact(db, userId, workspaceId, contactId)
+  for (const contactId of input.contactIds) await requireContactWrite(db, userId, workspaceId, contactId)
   const occurredAt = new Date(input.occurredAt)
   if (Number.isNaN(occurredAt.getTime())) throw new AppError(400, 'Use a valid date')
   const [row] = await db
@@ -334,50 +336,73 @@ export async function createActivity(db: Database, userId: string, workspaceId: 
     }
   }
   const [presented] = await attachActivityPeople(db, [row!])
+  for (const contactId of input.contactIds) await writeAudit(db, workspaceId, userId, 'activity.create', contactId, 'activity')
   return presented
 }
 
 export async function deleteActivity(db: Database, userId: string, workspaceId: string, activityId: string) {
-  await writer(db, userId, workspaceId)
   const [row] = await db.select().from(activities).where(and(eq(activities.id, activityId), eq(activities.workspaceId, workspaceId), isNull(activities.deletedAt))).limit(1)
   if (!row || !visible(userId, row.visibility, row.createdBy)) throw new AppError(404, 'Interaction not found')
+  const people = await db.select({ contactId: activityContacts.contactId }).from(activityContacts).where(eq(activityContacts.activityId, row.id))
+  if (people.length) {
+    for (const person of people) await requireContactWrite(db, userId, workspaceId, person.contactId)
+  } else {
+    await writer(db, userId, workspaceId)
+  }
   await db.update(activities).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(activities.id, row.id))
+  for (const person of people) await writeAudit(db, workspaceId, userId, 'activity.delete', person.contactId, 'activity')
 }
 
 export async function listTasks(db: Database, userId: string, workspaceId: string, contactId?: string) {
   if (contactId) await getContact(db, userId, workspaceId, contactId)
   else await reader(db, userId, workspaceId)
-  const filters = [eq(tasks.workspaceId, workspaceId), isNull(tasks.deletedAt)]
+  const filters = [eq(tasks.workspaceId, workspaceId), isNull(tasks.deletedAt), taskVisibleSql(userId), taskContactSql(userId)]
   if (contactId) filters.push(eq(tasks.contactId, contactId))
   const rows = await db.select().from(tasks).where(and(...filters)).orderBy(asc(tasks.dueAt))
   return rows.map(presentTask)
 }
 
 export async function createTask(db: Database, userId: string, workspaceId: string, input: z.infer<typeof taskSchema>) {
-  await writer(db, userId, workspaceId)
-  if (input.contactId) await getContact(db, userId, workspaceId, input.contactId)
+  if (input.contactId) await requireContactWrite(db, userId, workspaceId, input.contactId)
+  else await writer(db, userId, workspaceId)
   const [row] = await db
     .insert(tasks)
-    .values({ workspaceId, title: input.title.trim(), dueAt: input.dueAt ? new Date(input.dueAt) : null, contactId: input.contactId ?? null, activityId: input.activityId ?? null, createdBy: userId, assigneeId: userId })
+    .values({
+      workspaceId,
+      title: input.title.trim(),
+      visibility: input.visibility ?? 'workspace',
+      dueAt: input.dueAt ? new Date(input.dueAt) : null,
+      contactId: input.contactId ?? null,
+      activityId: input.activityId ?? null,
+      createdBy: userId,
+      assigneeId: userId,
+    })
     .returning()
+  await writeAudit(db, workspaceId, userId, 'task.create', input.contactId ?? row!.id, 'task')
   return presentTask(row!)
 }
 
 export async function completeTask(db: Database, userId: string, workspaceId: string, taskId: string, done: boolean) {
-  await writer(db, userId, workspaceId)
+  const existing = await readableTask(db, userId, workspaceId, taskId)
+  if (existing.contactId) await requireContactWrite(db, userId, workspaceId, existing.contactId)
+  else await writer(db, userId, workspaceId)
   const [row] = await db
     .update(tasks)
     .set({ completedAt: done ? new Date() : null, updatedAt: new Date() })
     .where(and(eq(tasks.id, taskId), eq(tasks.workspaceId, workspaceId), isNull(tasks.deletedAt)))
     .returning()
   if (!row) throw new AppError(404, 'Task not found')
+  await writeAudit(db, workspaceId, userId, 'task.complete', row.contactId ?? row.id, 'task')
   return presentTask(row)
 }
 
 export async function deleteTask(db: Database, userId: string, workspaceId: string, taskId: string) {
-  await writer(db, userId, workspaceId)
+  const existing = await readableTask(db, userId, workspaceId, taskId)
+  if (existing.contactId) await requireContactWrite(db, userId, workspaceId, existing.contactId)
+  else await writer(db, userId, workspaceId)
   const [row] = await db.update(tasks).set({ deletedAt: new Date(), updatedAt: new Date() }).where(and(eq(tasks.id, taskId), eq(tasks.workspaceId, workspaceId))).returning()
   if (!row) throw new AppError(404, 'Task not found')
+  await writeAudit(db, workspaceId, userId, 'task.delete', row.contactId ?? row.id, 'task')
 }
 
 export async function createReminder(db: Database, userId: string, workspaceId: string, input: z.infer<typeof reminderSchema>) {
@@ -455,7 +480,7 @@ export async function agenda(db: Database, userId: string, workspaceId: string) 
       lastInteractionAt: contacts.lastInteractionAt,
     })
     .from(contacts)
-    .where(and(eq(contacts.workspaceId, workspaceId), isNull(contacts.deletedAt)))
+    .where(and(eq(contacts.workspaceId, workspaceId), isNull(contacts.deletedAt), visibleContactSql(userId)))
   const dates = []
   for (const person of people) {
     for (const kind of ['birthday', 'anniversary'] as const) {
@@ -470,14 +495,14 @@ export async function agenda(db: Database, userId: string, workspaceId: string) 
   const openTasks = await db
     .select()
     .from(tasks)
-    .where(and(eq(tasks.workspaceId, workspaceId), isNull(tasks.deletedAt), isNull(tasks.completedAt)))
+    .where(and(eq(tasks.workspaceId, workspaceId), isNull(tasks.deletedAt), isNull(tasks.completedAt), taskVisibleSql(userId), taskContactSql(userId)))
     .orderBy(asc(tasks.dueAt))
     .limit(20)
   const soon = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
   const upcoming = await db
     .select()
     .from(reminders)
-    .where(and(eq(reminders.workspaceId, workspaceId), isNull(reminders.completedAt), lte(reminders.remindAt, soon), or(isNull(reminders.snoozedUntil), lte(reminders.snoozedUntil, new Date()))))
+    .where(and(eq(reminders.workspaceId, workspaceId), isNull(reminders.completedAt), lte(reminders.remindAt, soon), or(isNull(reminders.snoozedUntil), lte(reminders.snoozedUntil, new Date())), reminderContactSql(userId)))
     .orderBy(asc(reminders.remindAt))
     .limit(20)
   const reachOuts = []
@@ -589,7 +614,65 @@ export async function listWorkspaceNotes(db: Database, userId: string, workspace
 }
 
 function presentTask(row: typeof tasks.$inferSelect) {
-  return { id: row.id, title: row.title, dueAt: row.dueAt?.toISOString() ?? null, completedAt: row.completedAt?.toISOString() ?? null, contactId: row.contactId }
+  return { id: row.id, title: row.title, visibility: row.visibility, dueAt: row.dueAt?.toISOString() ?? null, completedAt: row.completedAt?.toISOString() ?? null, contactId: row.contactId }
+}
+
+function taskVisibleSql(userId: string) {
+  return sql`(${tasks.visibility} <> 'private' or ${tasks.createdBy} = ${userId} or ${tasks.assigneeId} = ${userId})`
+}
+
+function reminderContactSql(userId: string) {
+  return sql`(
+    ${reminders.contactId} is null
+    or exists (
+      select 1 from contacts c
+      where c.id = ${reminders.contactId}
+      and c.deleted_at is null
+      and (
+        c.visibility <> 'restricted'
+        or c.owner_id = ${userId}
+        or exists (select 1 from contact_grants g where g.contact_id = c.id and g.user_id = ${userId})
+        or exists (
+          select 1 from contact_group_grants cg
+          inner join user_group_members gm on gm.group_id = cg.group_id
+          where cg.contact_id = c.id and gm.user_id = ${userId}
+        )
+        or exists (select 1 from workspace_members wm where wm.workspace_id = c.workspace_id and wm.user_id = ${userId} and wm.role in ('owner', 'administrator'))
+      )
+    )
+  )`
+}
+
+function taskContactSql(userId: string) {
+  return sql`(
+    ${tasks.contactId} is null
+    or exists (
+      select 1 from contacts c
+      where c.id = ${tasks.contactId}
+      and c.deleted_at is null
+      and (
+        c.visibility <> 'restricted'
+        or c.owner_id = ${userId}
+        or exists (select 1 from contact_grants g where g.contact_id = c.id and g.user_id = ${userId})
+        or exists (
+          select 1 from contact_group_grants cg
+          inner join user_group_members gm on gm.group_id = cg.group_id
+          where cg.contact_id = c.id and gm.user_id = ${userId}
+        )
+        or exists (select 1 from workspace_members wm where wm.workspace_id = c.workspace_id and wm.user_id = ${userId} and wm.role in ('owner', 'administrator'))
+      )
+    )
+  )`
+}
+
+async function readableTask(db: Database, userId: string, workspaceId: string, taskId: string) {
+  const [row] = await db.select().from(tasks).where(and(eq(tasks.id, taskId), eq(tasks.workspaceId, workspaceId), isNull(tasks.deletedAt))).limit(1)
+  if (!row) throw new AppError(404, 'Task not found')
+  const shared = row.visibility !== 'private' || row.createdBy === userId || row.assigneeId === userId
+  if (!shared) throw new AppError(404, 'Task not found')
+  if (row.contactId) await getContact(db, userId, workspaceId, row.contactId)
+  else await reader(db, userId, workspaceId)
+  return row
 }
 
 function orgValues(input: z.infer<typeof organizationSchema>) {

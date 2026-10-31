@@ -4,22 +4,32 @@ import {
   addressBooks,
   addresses,
   auditLogs,
+  contactDates,
+  contactGrants,
+  contactGroupGrants,
   contactMethods,
   contactResources,
   contactTags,
   contacts,
   tags,
+  userGroupMembers,
+  userGroups,
+  users,
+  workspaceMembers,
+  type ContactGrantRole,
   type ContactType,
   type Database,
+  type WorkspaceRole,
 } from '@rolodex/db'
 import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm'
 import type { z } from 'zod'
-import { requireBook, requireMembership, requireWriter, type Db } from './access'
+import { requireBook, requireManager, requireMembership, requireWriter, type Db } from './access'
 import { AppError } from './errors'
 import { emptyToNull, isUuid, normalizeEmail, normalizePhone } from './normalize'
+import { decideContactAccess } from './permissions'
 import { etagMatches, makeEtag } from './secrets'
 import { cardDisplayName, parseVcards, serializeVcard, structuredName, type ParsedCard } from './vcard'
-import { contactSchema } from './validation'
+import { contactDateSchema, contactSchema } from './validation'
 
 export type ContactBody = z.infer<typeof contactSchema>
 
@@ -47,7 +57,7 @@ export async function listContacts(
 ) {
   const limit = Math.min(Math.max(query.limit ?? 50, 1), 200)
   const offset = Math.max(query.offset ?? 0, 0)
-  const filters = [eq(contacts.workspaceId, workspaceId), isNull(contacts.deletedAt)]
+  const filters = [eq(contacts.workspaceId, workspaceId), isNull(contacts.deletedAt), visibleContactSql(userId)]
   if (query.addressBookId) {
     const { book } = await requireBook(db, userId, query.addressBookId)
     if (book.workspaceId !== workspaceId) throw new AppError(404, 'Address book not found')
@@ -141,6 +151,7 @@ export async function listContacts(
         country: firstAddress.get(row.id)?.country || null,
         lat: firstAddress.get(row.id)?.latitude ?? null,
         lon: firstAddress.get(row.id)?.longitude ?? null,
+        visibility: row.visibility,
         tags: tagRows.filter((tag) => tag.contactId === row.id).map((tag) => ({ id: tag.id, name: tag.name })),
         addressBooks: bookRows.filter((book) => book.contactId === row.id).map((book) => ({ id: book.id, name: book.name })),
       }
@@ -149,8 +160,7 @@ export async function listContacts(
 }
 
 export async function locateContact(db: Database, userId: string, workspaceId: string, contactId: string, lat: number, lon: number) {
-  await requireWriter(db, userId, workspaceId)
-  await getContact(db, userId, workspaceId, contactId)
+  await requireContactWrite(db, userId, workspaceId, contactId)
   const [address] = await db.select().from(addresses).where(eq(addresses.contactId, contactId)).orderBy(asc(addresses.sortOrder)).limit(1)
   if (!address) throw new AppError(404, 'This contact has no address')
   await db.update(addresses).set({ latitude: lat, longitude: lon }).where(eq(addresses.id, address.id))
@@ -301,27 +311,31 @@ export async function deleteCard(db: Database, userId: string, bookId: string, u
 }
 
 export async function getLiveCard(db: Database, userId: string, bookId: string, uid: string) {
-  const { book } = await requireBook(db, userId, bookId)
+  const { book, role } = await requireBook(db, userId, bookId)
   const [resource] = await db
     .select()
     .from(contactResources)
     .where(and(eq(contactResources.addressBookId, book.id), eq(contactResources.uid, uid), isNull(contactResources.deletedAt)))
     .limit(1)
   if (!resource) throw new AppError(404, 'Contact not found')
+  const readable = await readableContactIds(db, userId, role, [resource.contactId])
+  if (!readable.has(resource.contactId)) throw new AppError(404, 'Contact not found')
   return resource
 }
 
 export async function listLiveCards(db: Database, userId: string, bookId: string) {
-  const { book } = await requireBook(db, userId, bookId)
-  return db
+  const { book, role } = await requireBook(db, userId, bookId)
+  const rows = await db
     .select()
     .from(contactResources)
     .where(and(eq(contactResources.addressBookId, book.id), isNull(contactResources.deletedAt)))
     .orderBy(asc(contactResources.uid))
+  const readable = await readableContactIds(db, userId, role, rows.map((row) => row.contactId))
+  return rows.filter((row) => readable.has(row.contactId))
 }
 
 export async function syncCollection(db: Database, userId: string, bookId: string, token: number | null) {
-  const { book } = await requireBook(db, userId, bookId)
+  const { book, role } = await requireBook(db, userId, bookId)
   if (token !== null && (!Number.isInteger(token) || token < 0 || token > book.syncToken)) {
     throw new AppError(409, 'Sync token is no longer valid')
   }
@@ -349,11 +363,12 @@ export async function syncCollection(db: Database, userId: string, bookId: strin
         )
     : []
   const liveByUid = new Map(live.map((row) => [row.uid, row]))
+  const readable = await readableContactIds(db, userId, role, live.map((row) => row.contactId))
   return {
     token: book.syncToken,
     changes: [...latest.values()].map((change) => {
       const resource = liveByUid.get(change.uid)
-      if (!resource || change.deleted) return { uid: change.uid, deleted: true, etag: null, vcard: null }
+      if (!resource || change.deleted || !readable.has(resource.contactId)) return { uid: change.uid, deleted: true, etag: null, vcard: null }
       return { uid: change.uid, deleted: false, etag: resource.etag, vcard: resource.vcardText }
     }),
   }
@@ -449,42 +464,81 @@ async function writableBookIds(db: Database, userId: string, workspaceId: string
   return requested
 }
 
-async function assertCanReadContact(db: Database, userId: string, workspaceId: string, bundle: Bundle) {
+export function visibleContactSql(userId: string) {
+  return sql`(
+    ${contacts.visibility} <> 'restricted'
+    or ${contacts.ownerId} = ${userId}
+    or exists (select 1 from contact_grants g where g.contact_id = ${contacts.id} and g.user_id = ${userId})
+    or exists (
+      select 1 from contact_group_grants cg
+      inner join user_group_members gm on gm.group_id = cg.group_id
+      where cg.contact_id = ${contacts.id} and gm.user_id = ${userId}
+    )
+    or exists (select 1 from workspace_members wm where wm.workspace_id = ${contacts.workspaceId} and wm.user_id = ${userId} and wm.role in ('owner', 'administrator'))
+  )`
+}
+
+async function accessFor(db: Database, userId: string, workspaceId: string, bundle: Bundle) {
   if (bundle.contact.workspaceId !== workspaceId) throw new AppError(404, 'Contact not found')
-  try {
-    await requireMembership(db, userId, workspaceId)
-    return
-  } catch (error) {
-    if (!(error instanceof AppError) || error.status !== 404) throw error
-  }
+  const [member] = await db
+    .select()
+    .from(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)))
+    .limit(1)
+  let bookRole: WorkspaceRole | null = null
   for (const book of bundle.books) {
     try {
-      await requireBook(db, userId, book.id)
-      return
+      const result = await requireBook(db, userId, book.id)
+      bookRole = result.role
+      break
     } catch (error) {
       if (!(error instanceof AppError)) throw error
     }
   }
-  throw new AppError(404, 'Contact not found')
+  const [grant] = await db
+    .select()
+    .from(contactGrants)
+    .where(and(eq(contactGrants.contactId, bundle.contact.id), eq(contactGrants.userId, userId)))
+    .limit(1)
+  const groupRoles = await db
+    .select({ role: contactGroupGrants.role })
+    .from(contactGroupGrants)
+    .innerJoin(userGroupMembers, eq(userGroupMembers.groupId, contactGroupGrants.groupId))
+    .where(and(eq(contactGroupGrants.contactId, bundle.contact.id), eq(userGroupMembers.userId, userId)))
+  const grantRole = strongerGrant([grant?.role, ...groupRoles.map((row) => row.role)])
+  return decideContactAccess({
+    visibility: bundle.contact.visibility,
+    ownerId: bundle.contact.ownerId,
+    userId,
+    workspaceRole: member?.role ?? null,
+    grant: grantRole,
+    bookRole,
+  })
+}
+
+async function assertCanReadContact(db: Database, userId: string, workspaceId: string, bundle: Bundle) {
+  const access = await accessFor(db, userId, workspaceId, bundle)
+  if (!access.read) throw new AppError(404, 'Contact not found')
+  return access
 }
 
 async function assertCanWriteContact(db: Database, userId: string, workspaceId: string, bundle: Bundle) {
-  if (bundle.contact.workspaceId !== workspaceId) throw new AppError(404, 'Contact not found')
-  try {
-    await requireWriter(db, userId, workspaceId)
-    return
-  } catch (error) {
-    if (!(error instanceof AppError) || (error.status !== 403 && error.status !== 404)) throw error
-  }
-  for (const book of bundle.books) {
-    try {
-      await requireBook(db, userId, book.id, true)
-      return
-    } catch (error) {
-      if (!(error instanceof AppError)) throw error
-    }
-  }
-  throw new AppError(403, 'You do not have permission to edit contacts')
+  const access = await accessFor(db, userId, workspaceId, bundle)
+  if (!access.read) throw new AppError(404, 'Contact not found')
+  if (!access.write) throw new AppError(403, 'You do not have permission to edit contacts')
+  return access
+}
+
+export async function requireContactWrite(db: Database, userId: string, workspaceId: string, contactId: string) {
+  const bundle = await loadBundle(db, contactId)
+  await assertCanWriteContact(db, userId, workspaceId, bundle)
+}
+
+async function requireContactManage(db: Database, userId: string, workspaceId: string, contactId: string) {
+  const bundle = await loadBundle(db, contactId)
+  const access = await assertCanReadContact(db, userId, workspaceId, bundle)
+  if (!access.manage) throw new AppError(403, 'You do not have permission to change access')
+  return bundle
 }
 
 async function insertContact(
@@ -815,6 +869,8 @@ function presentContact(bundle: Bundle) {
     professionalBackground: contact.professionalBackground,
     followUpFrequency: contact.followUpFrequency,
     lastInteractionAt: contact.lastInteractionAt?.toISOString() ?? null,
+    visibility: contact.visibility,
+    ownerId: contact.ownerId,
     hasPhoto: Boolean(contact.photoAttachmentId),
     photoAttachmentId: contact.photoAttachmentId,
     addressBookId: book?.id ?? null,
@@ -967,8 +1023,213 @@ function toParsed(
   }
 }
 
+export async function writeAudit(db: Db, workspaceId: string, actorId: string, action: string, entityId: string, entityType = 'contact') {
+  await db.insert(auditLogs).values({ workspaceId, actorId, action, entityType, entityId })
+}
+
 async function recordAudit(db: Db, workspaceId: string, actorId: string, action: string, entityId: string) {
-  await db.insert(auditLogs).values({ workspaceId, actorId, action, entityType: 'contact', entityId })
+  await writeAudit(db, workspaceId, actorId, action, entityId)
+}
+
+export async function contactAccess(db: Database, userId: string, workspaceId: string, contactId: string) {
+  const bundle = await loadBundle(db, contactId)
+  const access = await assertCanReadContact(db, userId, workspaceId, bundle)
+  const grants = await db
+    .select({ userId: users.id, email: users.email, displayName: users.displayName, role: contactGrants.role })
+    .from(contactGrants)
+    .innerJoin(users, eq(users.id, contactGrants.userId))
+    .where(eq(contactGrants.contactId, contactId))
+    .orderBy(asc(users.displayName))
+  const owner = bundle.contact.ownerId
+    ? await db.select({ userId: users.id, email: users.email, displayName: users.displayName }).from(users).where(eq(users.id, bundle.contact.ownerId)).limit(1)
+    : []
+  const groupRows = await db
+    .select({ groupId: userGroups.id, name: userGroups.name, role: contactGroupGrants.role, userId: users.id, displayName: users.displayName })
+    .from(contactGroupGrants)
+    .innerJoin(userGroups, eq(userGroups.id, contactGroupGrants.groupId))
+    .leftJoin(userGroupMembers, eq(userGroupMembers.groupId, userGroups.id))
+    .leftJoin(users, eq(users.id, userGroupMembers.userId))
+    .where(eq(contactGroupGrants.contactId, contactId))
+    .orderBy(asc(userGroups.name), asc(users.displayName))
+  const groups = new Map<string, { groupId: string; name: string; role: string; members: { userId: string; displayName: string }[] }>()
+  for (const row of groupRows) {
+    const current = groups.get(row.groupId) ?? { groupId: row.groupId, name: row.name, role: row.role, members: [] }
+    if (row.userId && row.displayName) current.members.push({ userId: row.userId, displayName: row.displayName })
+    groups.set(row.groupId, current)
+  }
+  return {
+    visibility: bundle.contact.visibility,
+    canManage: access.manage,
+    owner: owner[0] ?? null,
+    grants,
+    groups: [...groups.values()],
+  }
+}
+
+export async function setContactVisibility(db: Database, userId: string, workspaceId: string, contactId: string, visibility: 'workspace' | 'restricted') {
+  await requireContactManage(db, userId, workspaceId, contactId)
+  await db.update(contacts).set({ visibility, updatedAt: new Date() }).where(eq(contacts.id, contactId))
+  await writeAudit(db, workspaceId, userId, 'contact.access', contactId)
+  return contactAccess(db, userId, workspaceId, contactId)
+}
+
+export async function setContactOwner(db: Database, userId: string, workspaceId: string, contactId: string, nextOwnerId: string) {
+  await requireContactManage(db, userId, workspaceId, contactId)
+  const [member] = await db
+    .select()
+    .from(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, nextOwnerId)))
+    .limit(1)
+  if (!member) throw new AppError(400, 'Choose a member of this workspace')
+  await db.update(contacts).set({ ownerId: nextOwnerId, updatedAt: new Date() }).where(eq(contacts.id, contactId))
+  await writeAudit(db, workspaceId, userId, 'contact.owner', contactId)
+  return contactAccess(db, userId, workspaceId, contactId)
+}
+
+export async function grantContact(db: Database, userId: string, workspaceId: string, contactId: string, granteeId: string, role: ContactGrantRole) {
+  const bundle = await requireContactManage(db, userId, workspaceId, contactId)
+  if (granteeId === bundle.contact.ownerId) throw new AppError(400, 'The owner already has access')
+  const [member] = await db
+    .select()
+    .from(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, granteeId)))
+    .limit(1)
+  if (!member) throw new AppError(400, 'Choose a member of this workspace')
+  await db
+    .insert(contactGrants)
+    .values({ contactId, userId: granteeId, role })
+    .onConflictDoUpdate({ target: [contactGrants.contactId, contactGrants.userId], set: { role } })
+  await reflectSharing(db, contactId)
+  await writeAudit(db, workspaceId, userId, 'contact.grant', contactId)
+  return contactAccess(db, userId, workspaceId, contactId)
+}
+
+export async function grantContactGroup(db: Database, userId: string, workspaceId: string, contactId: string, groupId: string, role: ContactGrantRole) {
+  await requireContactManage(db, userId, workspaceId, contactId)
+  const [group] = await db.select().from(userGroups).where(and(eq(userGroups.id, groupId), eq(userGroups.workspaceId, workspaceId))).limit(1)
+  if (!group) throw new AppError(400, 'Choose a group in this workspace')
+  const applied = group.minRole === 'editor' ? 'editor' : role
+  await db
+    .insert(contactGroupGrants)
+    .values({ contactId, groupId, role: applied })
+    .onConflictDoUpdate({ target: [contactGroupGrants.contactId, contactGroupGrants.groupId], set: { role: applied } })
+  await reflectSharing(db, contactId)
+  await writeAudit(db, workspaceId, userId, 'contact.grant', contactId)
+  return contactAccess(db, userId, workspaceId, contactId)
+}
+
+export async function revokeContactGrant(db: Database, userId: string, workspaceId: string, contactId: string, granteeId: string) {
+  await requireContactManage(db, userId, workspaceId, contactId)
+  await db.delete(contactGrants).where(and(eq(contactGrants.contactId, contactId), eq(contactGrants.userId, granteeId)))
+  await reflectSharing(db, contactId)
+  await writeAudit(db, workspaceId, userId, 'contact.revoke', contactId)
+  return contactAccess(db, userId, workspaceId, contactId)
+}
+
+export async function revokeContactGroupGrant(db: Database, userId: string, workspaceId: string, contactId: string, groupId: string) {
+  await requireContactManage(db, userId, workspaceId, contactId)
+  await db.delete(contactGroupGrants).where(and(eq(contactGroupGrants.contactId, contactId), eq(contactGroupGrants.groupId, groupId)))
+  await reflectSharing(db, contactId)
+  await writeAudit(db, workspaceId, userId, 'contact.revoke', contactId)
+  return contactAccess(db, userId, workspaceId, contactId)
+}
+
+export async function listContactDates(db: Database, userId: string, workspaceId: string, contactId: string) {
+  await getContact(db, userId, workspaceId, contactId)
+  const rows = await db.select().from(contactDates).where(eq(contactDates.contactId, contactId)).orderBy(asc(contactDates.occursOn))
+  return rows.map((row) => ({ id: row.id, label: row.label, occursOn: row.occursOn }))
+}
+
+export async function addContactDate(db: Database, userId: string, workspaceId: string, contactId: string, input: z.infer<typeof contactDateSchema>) {
+  await requireContactWrite(db, userId, workspaceId, contactId)
+  const [row] = await db.insert(contactDates).values({ contactId, label: input.label.trim(), occursOn: input.occursOn }).returning()
+  if (!row) throw new AppError(500, 'Could not save the date')
+  return { id: row.id, label: row.label, occursOn: row.occursOn }
+}
+
+export async function deleteContactDate(db: Database, userId: string, workspaceId: string, contactId: string, dateId: string) {
+  await requireContactWrite(db, userId, workspaceId, contactId)
+  const [row] = await db.delete(contactDates).where(and(eq(contactDates.id, dateId), eq(contactDates.contactId, contactId))).returning()
+  if (!row) throw new AppError(404, 'Date not found')
+}
+
+export async function listAudit(db: Database, userId: string, workspaceId: string, contactId?: string) {
+  if (contactId) await getContact(db, userId, workspaceId, contactId)
+  else await requireManager(db, userId, workspaceId)
+  const filters = [eq(auditLogs.workspaceId, workspaceId)]
+  if (contactId) filters.push(eq(auditLogs.entityId, contactId))
+  const rows = await db
+    .select({
+      id: auditLogs.id,
+      action: auditLogs.action,
+      entityType: auditLogs.entityType,
+      entityId: auditLogs.entityId,
+      createdAt: auditLogs.createdAt,
+      actorName: users.displayName,
+    })
+    .from(auditLogs)
+    .leftJoin(users, eq(users.id, auditLogs.actorId))
+    .where(and(...filters))
+    .orderBy(desc(auditLogs.createdAt))
+    .limit(contactId ? 30 : 40)
+  return rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString(), actorName: row.actorName ?? 'Someone' }))
+}
+
+export async function readableContactIds(db: Database, userId: string, bookRole: WorkspaceRole, contactIds: string[]) {
+  const ids = [...new Set(contactIds)]
+  if (!ids.length) return new Set<string>()
+  const rows = await db
+    .select({ id: contacts.id, visibility: contacts.visibility, ownerId: contacts.ownerId, workspaceId: contacts.workspaceId })
+    .from(contacts)
+    .where(inArray(contacts.id, ids))
+  const workspaceIds = [...new Set(rows.map((row) => row.workspaceId))]
+  const members = workspaceIds.length
+    ? await db
+        .select()
+        .from(workspaceMembers)
+        .where(and(eq(workspaceMembers.userId, userId), inArray(workspaceMembers.workspaceId, workspaceIds)))
+    : []
+  const grants = await db
+    .select()
+    .from(contactGrants)
+    .where(and(eq(contactGrants.userId, userId), inArray(contactGrants.contactId, ids)))
+  const groupGrants = await db
+    .select({ contactId: contactGroupGrants.contactId, role: contactGroupGrants.role })
+    .from(contactGroupGrants)
+    .innerJoin(userGroupMembers, eq(userGroupMembers.groupId, contactGroupGrants.groupId))
+    .where(and(eq(userGroupMembers.userId, userId), inArray(contactGroupGrants.contactId, ids)))
+  const memberByWorkspace = new Map(members.map((member) => [member.workspaceId, member.role]))
+  const grantByContact = new Map<string, ContactGrantRole | null>()
+  for (const row of rows) {
+    const direct = grants.find((grant) => grant.contactId === row.id)?.role
+    const viaGroup = groupGrants.filter((grant) => grant.contactId === row.id).map((grant) => grant.role)
+    grantByContact.set(row.id, strongerGrant([direct, ...viaGroup]))
+  }
+  const allowed = new Set<string>()
+  for (const row of rows) {
+    const decision = decideContactAccess({
+      visibility: row.visibility,
+      ownerId: row.ownerId,
+      userId,
+      workspaceRole: memberByWorkspace.get(row.workspaceId) ?? null,
+      grant: grantByContact.get(row.id) ?? null,
+      bookRole,
+    })
+    if (decision.read) allowed.add(row.id)
+  }
+  return allowed
+}
+
+async function reflectSharing(db: Database, contactId: string) {
+  const [person] = await db.select({ id: contactGrants.userId }).from(contactGrants).where(eq(contactGrants.contactId, contactId)).limit(1)
+  const [group] = await db.select({ id: contactGroupGrants.groupId }).from(contactGroupGrants).where(eq(contactGroupGrants.contactId, contactId)).limit(1)
+  await db.update(contacts).set({ visibility: person || group ? 'restricted' : 'workspace', updatedAt: new Date() }).where(eq(contacts.id, contactId))
+}
+
+function strongerGrant(roles: Array<string | null | undefined>): ContactGrantRole | null {
+  if (roles.includes('editor')) return 'editor'
+  if (roles.includes('viewer')) return 'viewer'
+  return null
 }
 
 function isUniqueViolation(error: unknown) {

@@ -7,6 +7,9 @@ import { useAuth } from '../../../src/auth'
 import { font, theme } from '../../../src/theme'
 
 const baseLinks = [
+  { href: '/admin/members' as const, label: 'Users' },
+  { href: '/admin/sso' as const, label: 'Sign-in' },
+  { href: '/admin/notifications' as const, label: 'Notifications' },
   { href: '/admin/map' as const, label: 'Map' },
   { href: '/admin/relationships' as const, label: 'Relationships' },
   { href: '/admin/addons' as const, label: 'Add-ons' },
@@ -51,7 +54,7 @@ export default function AdminLayout() {
       <View style={styles.page}>
         <Text style={styles.title}>Admin</Text>
         <View style={[styles.body, !wide && styles.bodyStacked]}>
-          {wide ? <View style={styles.sidebar}>{nav}</View> : <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sidebarRow}>{nav}</ScrollView>}
+          {wide ? <View style={styles.sidebar}>{nav}</View> : <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.sidebarScroll} contentContainerStyle={styles.sidebarRow}>{nav}</ScrollView>}
           <View style={styles.main}>
             <Slot />
           </View>
@@ -68,8 +71,9 @@ const styles = StyleSheet.create({
   body: { flexDirection: 'row', alignItems: 'flex-start', gap: 22 },
   bodyStacked: { flexDirection: 'column' },
   sidebar: { width: 180, gap: 4 },
-  sidebarRow: { gap: 8, paddingBottom: 4 },
-  link: { color: theme.muted, fontFamily: font, fontSize: 15, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12 },
+  sidebarScroll: { flexGrow: 0, maxHeight: 52 },
+  sidebarRow: { gap: 8, alignItems: 'center' },
+  link: { color: theme.muted, fontFamily: font, fontSize: 15, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, alignSelf: 'flex-start' },
   linkActive: { backgroundColor: theme.text, color: '#fff' },
   main: { flex: 1, gap: 14, minWidth: 0 },
 })

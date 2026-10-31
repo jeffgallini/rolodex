@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { addressBookChanges, addressBookMembers, addressBooks, contactResources, users, workspaceMembers, type Database, type WorkspaceRole } from '@rolodex/db'
+import { readableContactIds } from './contacts'
 import { and, asc, eq, isNull } from 'drizzle-orm'
 import { defaultWritableWorkspace, requireBook, requireWriter } from './access'
 import { cardFingerprint, createContactFromCard, findDuplicates } from './contacts'
@@ -145,12 +146,14 @@ export async function deleteAddressBook(db: Database, userId: string, bookId: st
 }
 
 export async function exportAddressBook(db: Database, userId: string, bookId: string) {
-  const { book } = await requireBook(db, userId, bookId)
+  const { book, role } = await requireBook(db, userId, bookId)
   const rows = await db
-    .select({ vcardText: contactResources.vcardText })
+    .select({ vcardText: contactResources.vcardText, contactId: contactResources.contactId })
     .from(contactResources)
     .where(and(eq(contactResources.addressBookId, book.id), isNull(contactResources.deletedAt)))
+  const allowed = await readableContactIds(db, userId, role, rows.map((row) => row.contactId))
   const body = rows
+    .filter((row) => allowed.has(row.contactId))
     .map((row) => row.vcardText.trim())
     .filter(Boolean)
     .join('\r\n')

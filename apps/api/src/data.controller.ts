@@ -7,6 +7,10 @@ import {
   addressBookSchema,
   addressLocationSchema,
   contactSchema,
+  contactAccess,
+  contactGrantSchema,
+  contactOwnerSchema,
+  contactVisibilitySchema,
   contactOrganizations,
   completeTask,
   completeSchema,
@@ -34,10 +38,40 @@ import {
   deleteTask,
   exportAddressBook,
   getContact,
+  grantContact,
+  grantContactGroup,
+  revokeContactGroupGrant,
+  listContactDates,
+  addContactDate,
+  deleteContactDate,
+  listUserGroups,
+  createUserGroup,
+  updateUserGroup,
+  deleteUserGroup,
+  addUserGroupMember,
+  removeUserGroupMember,
+  userGroupSchema,
+  userGroupUpdateSchema,
+  registrationPolicySchema,
+  userGroupMemberSchema,
+  contactDateSchema,
+  listAudit,
+  getOauthSettings,
+  setOauthSettings,
+  unlinkOauthAccounts,
+  getNotificationSettings,
+  setNotificationSettings,
+  sendNotificationTest,
+  oauthSettingsSchema,
+  notificationSettingsSchema,
+  notificationTestSchema,
   getMapSettings,
   addonSchema,
   listAddons,
+  revokeContactGrant,
   setAddon,
+  setContactOwner,
+  setContactVisibility,
   attachImmichAsset,
   contactImmich,
   deleteImmichInstance,
@@ -65,6 +99,10 @@ import {
   locateContact,
   listCustomFields,
   listMembers,
+  inviteUser,
+  sendPasswordReset,
+  registrationPolicy,
+  setRegistrationPolicy,
   listNotes,
   listWorkspaceNotes,
   listRelationshipTypes,
@@ -181,6 +219,35 @@ export class DataController {
     return updateMemberRole(this.db, req.user.id, workspaceId, memberId, input.role)
   }
 
+  @Get('workspaces/:workspaceId/registration')
+  registration(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string) {
+    return registrationPolicy(this.db).then(async (policy) => {
+      await listMembers(this.db, req.user.id, workspaceId)
+      return policy
+    })
+  }
+
+  @Put('workspaces/:workspaceId/registration')
+  setRegistration(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    const input = parseBody(registrationPolicySchema, body)
+    return setRegistrationPolicy(this.db, req.user.id, workspaceId, input.inviteOnly)
+  }
+
+  @Post('workspaces/:workspaceId/invites')
+  invite(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    const input = parseBody(memberSchema, body)
+    return inviteUser(this.db, req.user.id, workspaceId, input.email, input.role)
+  }
+
+  @Post('workspaces/:workspaceId/members/:memberId/reset')
+  resetMember(
+    @Req() req: AuthedRequest,
+    @Param('workspaceId') workspaceId: string,
+    @Param('memberId') memberId: string,
+  ) {
+    return sendPasswordReset(this.db, req.user.id, workspaceId, memberId)
+  }
+
   @Delete('workspaces/:workspaceId/members/:memberId')
   async removeMember(
     @Req() req: AuthedRequest,
@@ -233,6 +300,118 @@ export class DataController {
   @Get('workspaces/:workspaceId/contacts/:contactId')
   contact(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string) {
     return getContact(this.db, req.user.id, workspaceId, contactId)
+  }
+
+  @Get('workspaces/:workspaceId/audit')
+  audit(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string) {
+    return listAudit(this.db, req.user.id, workspaceId)
+  }
+
+  @Get('workspaces/:workspaceId/contacts/:contactId/audit')
+  contactAudit(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string) {
+    return listAudit(this.db, req.user.id, workspaceId, contactId)
+  }
+
+  @Get('workspaces/:workspaceId/contacts/:contactId/access')
+  access(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string) {
+    return contactAccess(this.db, req.user.id, workspaceId, contactId)
+  }
+
+  @Put('workspaces/:workspaceId/contacts/:contactId/access')
+  changeAccess(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string, @Body() body: unknown) {
+    const input = parseBody(contactVisibilitySchema, body)
+    return setContactVisibility(this.db, req.user.id, workspaceId, contactId, input.visibility)
+  }
+
+  @Put('workspaces/:workspaceId/contacts/:contactId/owner')
+  changeOwner(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string, @Body() body: unknown) {
+    const input = parseBody(contactOwnerSchema, body)
+    return setContactOwner(this.db, req.user.id, workspaceId, contactId, input.userId)
+  }
+
+  @Post('workspaces/:workspaceId/contacts/:contactId/grants')
+  addGrant(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string, @Body() body: unknown) {
+    const input = parseBody(contactGrantSchema, body)
+    if (input.groupId) return grantContactGroup(this.db, req.user.id, workspaceId, contactId, input.groupId, input.role)
+    return grantContact(this.db, req.user.id, workspaceId, contactId, input.userId!, input.role)
+  }
+
+  @Delete('workspaces/:workspaceId/contacts/:contactId/groups/:groupId')
+  removeGroupGrant(
+    @Req() req: AuthedRequest,
+    @Param('workspaceId') workspaceId: string,
+    @Param('contactId') contactId: string,
+    @Param('groupId') groupId: string,
+  ) {
+    return revokeContactGroupGrant(this.db, req.user.id, workspaceId, contactId, groupId)
+  }
+
+  @Get('workspaces/:workspaceId/groups')
+  groups(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string) {
+    return listUserGroups(this.db, req.user.id, workspaceId)
+  }
+
+  @Post('workspaces/:workspaceId/groups')
+  createGroup(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    return createUserGroup(this.db, req.user.id, workspaceId, parseBody(userGroupSchema, body))
+  }
+
+  @Patch('workspaces/:workspaceId/groups/:groupId')
+  updateGroup(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('groupId') groupId: string, @Body() body: unknown) {
+    return updateUserGroup(this.db, req.user.id, workspaceId, groupId, parseBody(userGroupUpdateSchema, body))
+  }
+
+  @Delete('workspaces/:workspaceId/groups/:groupId')
+  async removeGroup(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('groupId') groupId: string) {
+    await deleteUserGroup(this.db, req.user.id, workspaceId, groupId)
+    return { ok: true }
+  }
+
+  @Post('workspaces/:workspaceId/groups/:groupId/members')
+  addGroupMember(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('groupId') groupId: string, @Body() body: unknown) {
+    return addUserGroupMember(this.db, req.user.id, workspaceId, groupId, parseBody(userGroupMemberSchema, body))
+  }
+
+  @Delete('workspaces/:workspaceId/groups/:groupId/members/:memberId')
+  async removeGroupMember(
+    @Req() req: AuthedRequest,
+    @Param('workspaceId') workspaceId: string,
+    @Param('groupId') groupId: string,
+    @Param('memberId') memberId: string,
+  ) {
+    await removeUserGroupMember(this.db, req.user.id, workspaceId, groupId, memberId)
+    return { ok: true }
+  }
+
+  @Get('workspaces/:workspaceId/contacts/:contactId/dates')
+  dates(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string) {
+    return listContactDates(this.db, req.user.id, workspaceId, contactId)
+  }
+
+  @Post('workspaces/:workspaceId/contacts/:contactId/dates')
+  createDate(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Param('contactId') contactId: string, @Body() body: unknown) {
+    return addContactDate(this.db, req.user.id, workspaceId, contactId, parseBody(contactDateSchema, body))
+  }
+
+  @Delete('workspaces/:workspaceId/contacts/:contactId/dates/:dateId')
+  async removeDate(
+    @Req() req: AuthedRequest,
+    @Param('workspaceId') workspaceId: string,
+    @Param('contactId') contactId: string,
+    @Param('dateId') dateId: string,
+  ) {
+    await deleteContactDate(this.db, req.user.id, workspaceId, contactId, dateId)
+    return { ok: true }
+  }
+
+  @Delete('workspaces/:workspaceId/contacts/:contactId/grants/:userId')
+  async removeGrant(
+    @Req() req: AuthedRequest,
+    @Param('workspaceId') workspaceId: string,
+    @Param('contactId') contactId: string,
+    @Param('userId') granteeId: string,
+  ) {
+    return revokeContactGrant(this.db, req.user.id, workspaceId, contactId, granteeId)
   }
 
   @Patch('workspaces/:workspaceId/contacts/:contactId')
@@ -750,6 +929,37 @@ export class DataController {
     } catch (error) {
       console.error('Could not delete stored photo', error)
     }
+  }
+
+  @Get('workspaces/:workspaceId/server/oauth')
+  oauthSettings(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string) {
+    return getOauthSettings(this.db, req.user.id, workspaceId)
+  }
+
+  @Put('workspaces/:workspaceId/server/oauth')
+  saveOauth(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    return setOauthSettings(this.db, req.user.id, workspaceId, parseBody(oauthSettingsSchema, body))
+  }
+
+  @Post('workspaces/:workspaceId/server/oauth/unlink')
+  unlinkOauth(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string) {
+    return unlinkOauthAccounts(this.db, req.user.id, workspaceId)
+  }
+
+  @Get('workspaces/:workspaceId/server/notifications')
+  notificationSettings(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string) {
+    return getNotificationSettings(this.db, req.user.id, workspaceId)
+  }
+
+  @Put('workspaces/:workspaceId/server/notifications')
+  saveNotifications(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    return setNotificationSettings(this.db, req.user.id, workspaceId, parseBody(notificationSettingsSchema, body))
+  }
+
+  @Post('workspaces/:workspaceId/server/notifications/test')
+  testNotification(@Req() req: AuthedRequest, @Param('workspaceId') workspaceId: string, @Body() body: unknown) {
+    const input = parseBody(notificationTestSchema, body)
+    return sendNotificationTest(this.db, req.user.id, workspaceId, input.channel)
   }
 }
 

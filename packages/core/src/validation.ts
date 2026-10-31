@@ -8,6 +8,16 @@ export const registerSchema = z.object({
   email: z.string().trim().email().max(200),
   password: z.string().min(8).max(200),
   displayName: z.string().trim().min(1).max(120).optional(),
+  invite: z.string().trim().max(200).optional(),
+})
+
+export const passwordResetSchema = z.object({
+  token: z.string().trim().min(20).max(200),
+  password: z.string().min(8).max(200),
+})
+
+export const registrationPolicySchema = z.object({
+  inviteOnly: z.boolean(),
 })
 
 export const loginSchema = z.object({
@@ -170,6 +180,42 @@ export const taskSchema = z.object({
   dueAt: z.string().min(4).max(40).nullish(),
   contactId: z.string().uuid().nullish(),
   activityId: z.string().uuid().nullish(),
+  visibility: z.enum(['private', 'workspace']).optional(),
+})
+
+export const contactVisibilitySchema = z.object({
+  visibility: z.enum(['workspace', 'restricted']),
+})
+
+export const contactOwnerSchema = z.object({
+  userId: z.string().uuid(),
+})
+
+export const contactGrantSchema = z
+  .object({
+    userId: z.string().uuid().optional(),
+    groupId: z.string().uuid().optional(),
+    role: z.enum(['viewer', 'editor']),
+  })
+  .refine((value) => Boolean(value.userId) !== Boolean(value.groupId), { message: 'Choose a person or a group' })
+
+export const userGroupSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  minRole: z.enum(['viewer', 'editor']).default('viewer'),
+})
+
+export const userGroupUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(80).optional(),
+  minRole: z.enum(['viewer', 'editor']).optional(),
+})
+
+export const userGroupMemberSchema = z.object({
+  userId: z.string().uuid(),
+})
+
+export const contactDateSchema = z.object({
+  label: z.string().trim().min(1).max(80),
+  occursOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like YYYY-MM-DD'),
 })
 
 export const reminderSchema = z.object({
@@ -232,7 +278,71 @@ export const immichPhotoSchema = z.object({
 
 export const immichAssetSchema = z.object({ assetId: z.string().uuid() })
 
-export function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
+export const oauthSettingsSchema = z.object({
+  enabled: z.boolean(),
+  issuerUrl: z.string().trim().max(500).default(''),
+  clientId: z.string().trim().max(500).default(''),
+  clientSecret: z.string().max(500).default(''),
+  tokenEndpointAuthMethod: z.enum(['client_secret_post', 'client_secret_basic', 'none']),
+  scope: z.string().trim().min(1).max(300),
+  idTokenSignedResponseAlg: z.enum(['RS256', 'ES256', 'HS256']),
+  userinfoSignedResponseAlg: z.enum(['none', 'RS256', 'ES256']),
+  prompt: z.string().trim().max(120).default(''),
+  endSessionEndpoint: z.string().trim().max(500).default(''),
+  requestTimeoutMs: z.number().int().min(1000).max(120_000),
+  allowInsecureRequests: z.boolean(),
+  nameClaim: z.string().trim().max(80).default('preferred_username'),
+  roleClaim: z.string().trim().max(80).default(''),
+  buttonText: z.string().trim().min(1).max(80),
+  accountManagementUrl: z.string().trim().max(500).default(''),
+  autoRegister: z.boolean(),
+  autoLaunch: z.boolean(),
+  appUrl: z.string().trim().max(500),
+  publicUrl: z.string().trim().max(500),
+  mobileRedirectOverride: z.boolean(),
+  mobileRedirectUri: z.string().trim().max(500).default(''),
+})
+
+export const notificationSettingsSchema = z.object({
+  appUrl: z.string().trim().max(500).default(''),
+  email: z.object({
+    enabled: z.boolean(),
+    host: z.string().trim().max(255).default(''),
+    port: z.number().int().min(1).max(65535),
+    username: z.string().max(320).default(''),
+    password: z.string().max(500).default(''),
+    secure: z.boolean(),
+    ignoreCertificateErrors: z.boolean(),
+    from: z.string().trim().max(320).default(''),
+  }),
+  push: z.object({
+    enabled: z.boolean(),
+    subject: z.string().trim().max(320).default(''),
+  }),
+  webhook: z.object({
+    enabled: z.boolean(),
+    url: z.string().trim().max(500).default(''),
+    secret: z.string().max(500).default(''),
+  }),
+})
+
+export const notificationTestSchema = z.object({
+  channel: z.enum(['email', 'push', 'webhook']),
+})
+
+export const pushSubscriptionSchema = z.object({
+  endpoint: z.string().url().max(2000),
+  keys: z.object({
+    p256dh: z.string().min(1).max(300),
+    auth: z.string().min(1).max(300),
+  }),
+})
+
+export const oauthExchangeSchema = z.object({
+  code: z.string().min(10).max(200),
+})
+
+export function parseBody<Schema extends z.ZodTypeAny>(schema: Schema, body: unknown): z.output<Schema> {
   const result = schema.safeParse(body)
   if (!result.success) {
     const message = result.error.issues.map((issue) => issue.message).join(' ')

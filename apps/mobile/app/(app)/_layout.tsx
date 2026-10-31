@@ -11,7 +11,6 @@ const links = [
   { href: '/interactions', label: 'Interactions' },
   { href: '/tasks', label: 'Tasks' },
   { href: '/books', label: 'Address books' },
-  { href: '/members', label: 'Members' },
   { href: '/settings', label: 'Settings' },
 ] as const
 

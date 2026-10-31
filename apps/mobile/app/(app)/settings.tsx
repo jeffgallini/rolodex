@@ -92,6 +92,11 @@ export default function Settings() {
         {colorError ? <Notice text={colorError} /> : null}
       </Panel>
       <Panel>
+        <Text style={styles.name}>Push on this browser</Text>
+        <Text style={styles.meta}>An administrator turns on server push. This browser then receives reminder notifications.</Text>
+        <PushOptIn />
+      </Panel>
+      <Panel>
         <Text style={styles.name}>CardDAV</Text>
         <Text style={styles.meta}>Server</Text>
         <Text style={styles.value}>{session?.carddavUrl}</Text>
@@ -130,6 +135,48 @@ export default function Settings() {
       </Panel>
     </View>
   )
+}
+
+function PushOptIn() {
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  async function enable() {
+    setError('')
+    setMessage('')
+    if (Platform.OS !== 'web' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      setError('This browser cannot receive push notifications')
+      return
+    }
+    const config = await api<{ enabled: boolean; publicKey: string }>('/api/notifications/push')
+    if (!config.enabled || !config.publicKey) {
+      setError('An administrator has not turned on push')
+      return
+    }
+    const registration = await navigator.serviceWorker.register('/push-sw.js')
+    const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytesFromBase64(config.publicKey) })
+    const json = subscription.toJSON()
+    if (!json.endpoint || !json.keys?.p256dh || !json.keys.auth) {
+      setError('The browser did not return a push subscription')
+      return
+    }
+    await api('/api/notifications/push', { method: 'POST', body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }) })
+    setMessage('This browser will receive push notifications')
+  }
+
+  return (
+    <View>
+      {error ? <Notice text={error} /> : null}
+      {message ? <Text style={styles.meta}>{message}</Text> : null}
+      <Button label="Enable on this browser" tone="ghost" onPress={() => void enable().catch((caught: unknown) => setError(caught instanceof Error ? caught.message : 'Could not enable push'))} />
+    </View>
+  )
+}
+
+function bytesFromBase64(value: string) {
+  const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (value.length % 4)) % 4)
+  const raw = atob(padded)
+  return Uint8Array.from(raw, (char) => char.charCodeAt(0))
 }
 
 const styles = StyleSheet.create({

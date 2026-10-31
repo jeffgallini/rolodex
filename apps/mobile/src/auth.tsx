@@ -10,7 +10,8 @@ type AuthValue = {
   workspace: Workspace | null
   workspaces: Workspace[]
   signIn: (email: string, password: string) => Promise<void>
-  signUp: (email: string, password: string, displayName: string) => Promise<void>
+  signUp: (email: string, password: string, displayName: string, invite?: string) => Promise<void>
+  completeOauth: (token: string) => Promise<void>
   signOut: () => Promise<void>
   refreshWorkspaces: () => Promise<void>
   selectWorkspace: (workspace: Workspace) => void
@@ -83,15 +84,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const me = await api<{ carddavUrl: string }>('/api/auth/me')
         await loadWorkspaces(result.token, { ...result.user, carddavUrl: me.carddavUrl })
       },
-      async signUp(email, password, displayName) {
+      async signUp(email, password, displayName, invite) {
         const result = await api<{ token: string; user: { id: string; email: string; displayName: string } }>(
           '/api/auth/register',
-          { method: 'POST', body: JSON.stringify({ email, password, displayName }) },
+          { method: 'POST', body: JSON.stringify({ email, password, displayName, invite: invite || undefined }) },
         )
         const me = await api<{ carddavUrl: string }>('/api/auth/me')
         await loadWorkspaces(result.token, { ...result.user, carddavUrl: me.carddavUrl })
       },
+      async completeOauth(authToken) {
+        setToken(authToken)
+        const me = await api<{ user: { id: string; email: string; displayName: string }; carddavUrl: string }>('/api/auth/me')
+        await loadWorkspaces(authToken, { ...me.user, carddavUrl: me.carddavUrl })
+      },
       async signOut() {
+        let endSession = ''
+        let clientId = ''
+        try {
+          const config = await api<{ endSessionEndpoint?: string; clientId?: string }>('/api/auth/oauth')
+          endSession = config.endSessionEndpoint || ''
+          clientId = config.clientId || ''
+        } catch {
+          endSession = ''
+        }
         try {
           await api('/api/auth/logout', { method: 'POST' })
         } finally {
@@ -100,6 +115,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setSession(null)
           setWorkspace(null)
           writeStored(null)
+          if (endSession && Platform.OS === 'web') {
+            const url = new URL(endSession)
+            url.searchParams.set('post_logout_redirect_uri', `${window.location.origin}/sign-in`)
+            if (clientId) url.searchParams.set('client_id', clientId)
+            window.location.assign(url.toString())
+          }
         }
       },
       async refreshWorkspaces() {

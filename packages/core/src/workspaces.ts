@@ -1,5 +1,5 @@
-import { users, workspaceMembers, workspaces, type Database, type WorkspaceRole } from '@rolodex/db'
-import { and, asc, eq } from 'drizzle-orm'
+import { contacts, users, workspaceMembers, workspaces, type Database, type WorkspaceRole } from '@rolodex/db'
+import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 import { requireManager, requireMembership } from './access'
 import { AppError } from './errors'
 import { normalizeEmail } from './normalize'
@@ -31,7 +31,7 @@ export async function listWorkspaces(db: Database, userId: string) {
 
 export async function listMembers(db: Database, userId: string, workspaceId: string) {
   await requireMembership(db, userId, workspaceId)
-  return db
+  const rows = await db
     .select({
       userId: users.id,
       email: users.email,
@@ -43,6 +43,13 @@ export async function listMembers(db: Database, userId: string, workspaceId: str
     .innerJoin(users, eq(users.id, workspaceMembers.userId))
     .where(eq(workspaceMembers.workspaceId, workspaceId))
     .orderBy(asc(users.displayName))
+  const counts = await db
+    .select({ ownerId: contacts.ownerId, total: sql<number>`count(*)::int` })
+    .from(contacts)
+    .where(and(eq(contacts.workspaceId, workspaceId), isNull(contacts.deletedAt)))
+    .groupBy(contacts.ownerId)
+  const byOwner = new Map(counts.map((row) => [row.ownerId, Number(row.total)]))
+  return rows.map((row) => ({ ...row, contactCount: byOwner.get(row.userId) ?? 0 }))
 }
 
 export async function addMember(db: Database, actorId: string, workspaceId: string, email: string, role: WorkspaceRole) {

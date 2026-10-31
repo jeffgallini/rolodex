@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native'
 import { api, send, type Task } from '../../src/api'
 import { useAuth } from '../../src/auth'
 import { font, theme } from '../../src/theme'
+import { Choice } from '../../src/people'
 import { Button, Field, Notice, Panel } from '../../src/ui'
 
 export default function TasksPage() {
@@ -11,6 +12,7 @@ export default function TasksPage() {
   const [rows, setRows] = useState<Task[]>([])
   const [title, setTitle] = useState('')
   const [due, setDue] = useState('')
+  const [shared, setShared] = useState(true)
   const [error, setError] = useState('')
 
   function load() {
@@ -32,7 +34,7 @@ export default function TasksPage() {
         return (
           <Panel key={row.id}>
             <Text style={styles.name}>{row.title}</Text>
-            <Text style={styles.meta}>{row.dueAt ? (overdue ? `Overdue · ${row.dueAt.slice(0, 10)}` : `Due ${row.dueAt.slice(0, 10)}`) : 'No due date'}</Text>
+            <Text style={styles.meta}>{row.dueAt ? (overdue ? `Overdue · ${row.dueAt.slice(0, 10)}` : `Due ${row.dueAt.slice(0, 10)}`) : 'No due date'} · {row.visibility === 'private' ? 'private' : 'shared'}</Text>
             {canWrite ? (
               <Button label="Complete" onPress={() => void send(`/api/workspaces/${workspace?.id}/tasks/${row.id}/complete`, 'POST', { completed: true }).then(load)} />
             ) : null}
@@ -47,10 +49,11 @@ export default function TasksPage() {
         <Panel>
           <Field label="Title" value={title} onChangeText={setTitle} />
           <Field label="Due date" value={due} onChangeText={setDue} placeholder="YYYY-MM-DD" />
+          <Choice label={shared ? 'Shared with the workspace' : 'Private'} on={shared} onPress={() => setShared((current) => !current)} />
           <Button
             label="Add task"
             disabled={!title.trim()}
-            onPress={() => void send(`/api/workspaces/${workspace.id}/tasks`, 'POST', { title: title.trim(), dueAt: due || null }).then(() => { setTitle(''); setDue(''); load() }).catch((caught: Error) => setError(caught.message))}
+            onPress={() => void send(`/api/workspaces/${workspace.id}/tasks`, 'POST', { title: title.trim(), dueAt: due || null, visibility: shared ? 'workspace' : 'private' }).then(() => { setTitle(''); setDue(''); load() }).catch((caught: Error) => setError(caught.message))}
           />
         </Panel>
       ) : null}

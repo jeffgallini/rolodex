@@ -1,29 +1,29 @@
 import { useRouter, usePathname } from 'expo-router'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { agendaLines } from './agenda'
 import { api, type Agenda } from './api'
+import { useAccent } from './accent'
 import { useAuth } from './auth'
 import { Icon } from './icons'
 import { RolodexMark } from './logo'
 import { font, theme } from './theme'
 
-type Menu = 'notifications' | 'profile' | 'more' | null
+type Menu = 'notifications' | 'profile' | 'more' | 'create' | null
 
 const moreLinks = [
-  { href: '/organizations', label: 'Organizations' },
-  { href: '/interactions', label: 'Interactions' },
-  { href: '/tasks', label: 'Tasks' },
-  { href: '/books', label: 'Address books' },
-  { href: '/members', label: 'Members' },
-  { href: '/settings', label: 'Settings' },
+  { href: '/organizations', label: 'Organizations', icon: 'building' },
+  { href: '/tasks', label: 'Tasks', icon: 'task' },
+  { href: '/books', label: 'Address books', icon: 'contacts' },
+  { href: '/settings', label: 'Settings', icon: 'settings' },
 ] as const
 
 export function MobileShell({ children }: { children: ReactNode }) {
   const { session, workspace, workspaces, selectWorkspace, signOut } = useAuth()
   const canManage = workspace?.role === 'owner' || workspace?.role === 'administrator'
-  const menuLinks = [...moreLinks.slice(0, -1), ...(canManage ? [{ href: '/admin', label: 'Admin' }] : []), moreLinks[moreLinks.length - 1]]
+  const menuLinks = [...moreLinks, ...(canManage ? [{ href: '/admin', label: 'Admin', icon: 'briefcase' as const }] : [])]
+  const { accent, onAccent } = useAccent()
   const router = useRouter()
   const path = usePathname()
   const insets = useSafeAreaInsets()
@@ -35,6 +35,14 @@ export function MobileShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     setMenu(null)
   }, [path])
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return
+    const node = document.createElement('style')
+    node.textContent = '[data-rolodex-row]:hover{background-color:#f0f0f0}'
+    document.head.appendChild(node)
+    return () => node.remove()
+  }, [])
 
   useEffect(() => {
     if (menu !== 'notifications' || !workspace) return
@@ -80,9 +88,9 @@ export function MobileShell({ children }: { children: ReactNode }) {
         <View style={[styles.popover, styles.popoverRight, { top: 64 + insets.top + 8 }]}>
           <Text style={styles.popoverTitle}>Notifications</Text>
           {agenda && agendaLines(agenda).length ? agendaLines(agenda).map((line) => (
-            <Pressable key={line.key} onPress={() => router.push(line.href)} style={styles.row}>
+            <MenuRow key={line.key} onPress={() => router.push(line.href)}>
               <Text style={styles.rowText}>{line.label}</Text>
-            </Pressable>
+            </MenuRow>
           )) : <Text style={styles.muted}>Nothing new.</Text>}
         </View>
       ) : null}
@@ -101,43 +109,40 @@ export function MobileShell({ children }: { children: ReactNode }) {
           {workspaces.length > 1 ? (
             <View style={styles.section}>
               {workspaces.map((item) => (
-                <Pressable key={item.id} onPress={() => selectWorkspace(item)} style={styles.row}>
+                <MenuRow key={item.id} onPress={() => selectWorkspace(item)}>
                   <Text style={[styles.rowText, item.id === workspace?.id && styles.rowTextOn]}>{item.name}</Text>
-                </Pressable>
+                </MenuRow>
               ))}
             </View>
           ) : null}
           {canManage ? (
-            <Pressable
+            <MenuRow
               onPress={() => {
                 setMenu(null)
                 router.push('/admin')
               }}
-              style={styles.row}
             >
-              <Icon name="settings" color={theme.text} size={18} />
+              <Icon name="briefcase" color={theme.text} size={18} />
               <Text style={styles.rowText}>Admin</Text>
-            </Pressable>
+            </MenuRow>
           ) : null}
-          <Pressable
+          <MenuRow
             onPress={() => {
               setMenu(null)
               router.push('/settings')
             }}
-            style={styles.row}
           >
             <Icon name="settings" color={theme.text} size={18} />
             <Text style={styles.rowText}>Settings</Text>
-          </Pressable>
-          <Pressable
+          </MenuRow>
+          <MenuRow
             onPress={() => {
               void signOut().then(() => router.replace('/sign-in'))
             }}
-            style={styles.row}
           >
             <Icon name="logout" color={theme.danger} size={18} />
             <Text style={styles.danger}>Sign out</Text>
-          </Pressable>
+          </MenuRow>
         </View>
       ) : null}
       <ScrollView onScroll={onScroll} scrollEventThrottle={16} style={styles.main} contentContainerStyle={styles.content}>
@@ -148,24 +153,41 @@ export function MobileShell({ children }: { children: ReactNode }) {
           {menuLinks.map((link) => {
             const active = path.startsWith(link.href)
             return (
-              <Pressable key={link.href} onPress={() => router.push(link.href)} style={styles.row}>
+              <MenuRow key={link.href} onPress={() => router.push(link.href)}>
+                <Icon name={link.icon} color={active ? theme.text : theme.muted} size={18} />
                 <Text style={[styles.rowText, active && styles.rowTextOn]}>{link.label}</Text>
-              </Pressable>
+              </MenuRow>
             )
           })}
         </View>
       ) : null}
+      {menu === 'create' ? (
+        <View style={[styles.createWrap, { bottom: 128 + insets.bottom }]}>
+          <View style={[styles.popover, styles.createPopover, styles.createCard]}>
+            <MenuRow onPress={() => router.push('/contacts/new')}>
+              <Icon name="contacts" color={theme.text} size={18} />
+              <Text style={styles.rowText}>New contact</Text>
+            </MenuRow>
+            <MenuRow onPress={() => router.push('/interactions')}>
+              <Icon name="interactions" color={theme.text} size={18} />
+              <Text style={styles.rowText}>New interaction</Text>
+            </MenuRow>
+            <MenuRow onPress={() => router.push('/tasks')}>
+              <Icon name="task" color={theme.text} size={18} />
+              <Text style={styles.rowText}>New task</Text>
+            </MenuRow>
+          </View>
+        </View>
+      ) : null}
       <View style={[styles.dockWrap, { bottom: 16 + insets.bottom }]}>
         <View style={styles.dock}>
-          <Pressable onPress={() => router.push('/')} style={[styles.dockHit, path === '/' && styles.dockHitOn]}>
-            <Icon name="contacts" color={path === '/' ? '#fff' : '#737373'} size={22} />
+          <DockButton label="Home" icon="home" active={path === '/'} accent={accent} onAccent={onAccent} onPress={() => router.push('/')} />
+          <DockButton label="Contacts" icon="contacts" active={path.startsWith('/contacts')} accent={accent} onAccent={onAccent} onPress={() => router.push('/')} />
+          <Pressable accessibilityLabel="Add" onPress={() => toggle('create')} style={styles.plus}>
+            <Icon name="plus" color="#3f3f46" size={24} />
           </Pressable>
-          <Pressable onPress={() => router.push('/contacts/new')} style={styles.plus}>
-            <Icon name="plus" color="#fff" size={26} />
-          </Pressable>
-          <Pressable onPress={() => toggle('more')} style={[styles.dockHit, menu === 'more' && styles.dockHitOn]}>
-            <Icon name="more" color={menu === 'more' ? '#fff' : '#737373'} size={22} />
-          </Pressable>
+          <DockButton label="Interactions" icon="interactions" active={path.startsWith('/interactions')} accent={accent} onAccent={onAccent} onPress={() => router.push('/interactions')} />
+          <DockButton label="More" icon="more" active={menu === 'more' || menuLinks.some((link) => path.startsWith(link.href))} accent={accent} onAccent={onAccent} onPress={() => toggle('more')} />
         </View>
       </View>
     </View>
@@ -199,17 +221,19 @@ const styles = StyleSheet.create({
   dock: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 2,
     backgroundColor: 'rgba(255,255,255,0.94)',
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.8)',
   },
-  dockHit: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  dockHitOn: { backgroundColor: theme.ink },
-  plus: { width: 58, height: 58, borderRadius: 29, backgroundColor: theme.ink, alignItems: 'center', justifyContent: 'center', marginTop: -16 },
+  dockHit: { width: 42, height: 42, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  plus: { width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center', marginTop: -12, marginHorizontal: 2, backgroundColor: '#e4e4e7' },
+  createWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 5 },
+  createPopover: { width: 230 },
+  createCard: { position: 'relative' },
   popover: { position: 'absolute', width: 280, borderRadius: 22, borderWidth: 1, borderColor: 'rgba(255,255,255,0.7)', padding: 14, gap: 8, zIndex: 5, ...glass },
   popoverRight: { right: 12 },
   morePopover: { right: 24 },
@@ -219,8 +243,56 @@ const styles = StyleSheet.create({
   role: { fontFamily: font, fontSize: 11, letterSpacing: 0.8, textTransform: 'uppercase', color: theme.muted },
   muted: { fontFamily: font, color: theme.muted, fontSize: 13 },
   section: { gap: 2, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(17,17,17,0.08)' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, paddingHorizontal: 8, borderRadius: 10 },
+  rowHover: { backgroundColor: '#f0f0f0' },
   rowText: { fontFamily: font, color: theme.text, fontSize: 15 },
   rowTextOn: { fontWeight: '700' },
   danger: { fontFamily: font, color: theme.danger, fontSize: 15, fontWeight: '600' },
 })
+
+function MenuRow({ children, onPress }: { children: ReactNode; onPress: () => void }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <Pressable dataSet={{ rolodexRow: '1' }} onPress={onPress} onHoverIn={() => setHover(true)} onHoverOut={() => setHover(false)} style={[styles.row, hover && styles.rowHover]}>
+      {children}
+    </Pressable>
+  )
+}
+
+function DockButton({
+  label,
+  icon,
+  active,
+  accent,
+  onAccent,
+  onPress,
+}: {
+  label: string
+  icon: ComponentProps<typeof Icon>['name']
+  active: boolean
+  accent: string
+  onAccent: string
+  onPress: () => void
+}) {
+  const [hover, setHover] = useState(false)
+  return (
+    <Pressable
+      accessibilityLabel={label}
+      onPress={onPress}
+      onHoverIn={() => setHover(true)}
+      onHoverOut={() => setHover(false)}
+      style={[styles.dockHit, hover && !active && { backgroundColor: accentTint(accent, 0.16) }, active && { backgroundColor: accent }]}
+    >
+      <Icon name={icon} color={active ? onAccent : hover ? accent : '#737373'} size={22} />
+    </Pressable>
+  )
+}
+
+function accentTint(hex: string, alpha: number) {
+  const raw = hex.replace('#', '')
+  if (raw.length !== 6) return `rgba(17, 17, 17, ${alpha})`
+  const red = Number.parseInt(raw.slice(0, 2), 16)
+  const green = Number.parseInt(raw.slice(2, 4), 16)
+  const blue = Number.parseInt(raw.slice(4, 6), 16)
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`
+}

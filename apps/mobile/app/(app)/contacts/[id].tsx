@@ -1,12 +1,14 @@
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { useEffect, useState } from 'react'
 import { createElement } from 'react'
-import { Linking, Platform, StyleSheet, Text, View } from 'react-native'
+import { Platform, StyleSheet, Text, View } from 'react-native'
 import { api, ApiError, type Contact, type ImmichGallery } from '../../../src/api'
 import { useAuth } from '../../../src/auth'
 import { Loader } from '../../../src/logo'
-import { methodTitle } from '../../../src/methods'
 import { font, theme } from '../../../src/theme'
+import { ContactHistory, ContactShare } from '../../../src/contact-access'
+import { ContactOverview } from '../../../src/contact-overview'
+import { RelationshipGraph } from '../../../src/relationship-graph'
 import { ImmichPhotos } from '../../../src/immich-photos'
 import { ProfileCrm } from '../../../src/profile-crm'
 import { Timeline } from '../../../src/timeline'
@@ -106,33 +108,8 @@ export default function ContactProfile() {
           attachments={photoLinks}
           about={
             <View style={styles.page}>
-              <Panel>
-                <Text style={styles.section}>Overview</Text>
-                {contact.methods.map((method) => (
-                  <Text
-                    key={method.id}
-                    style={styles.link}
-                    onPress={() => void Linking.openURL(method.kind === 'email' ? `mailto:${method.value}` : `tel:${method.value}`)}
-                  >
-                    {methodTitle(method.label)}: {method.value}
-                  </Text>
-                ))}
-                {contact.addresses.map((address) => (
-                  <Text key={address.id} style={styles.body}>
-                    {[address.street, address.city, address.region, address.postalCode, address.country].filter(Boolean).join(', ')}
-                  </Text>
-                ))}
-                {contact.website ? <Text style={styles.link} onPress={() => void Linking.openURL(contact.website!)}>{contact.website}</Text> : null}
-                {contact.birthday ? <Text style={styles.body}>Birthday {contact.birthday}</Text> : null}
-                <View style={styles.pills}>
-                  {contact.addressBooks?.map((book) => (
-                    <Text key={book.id} style={styles.pill}>{book.name}</Text>
-                  ))}
-                  {contact.tags.map((tag) => (
-                    <Text key={tag.id} style={styles.tag}>{tag.name}</Text>
-                  ))}
-                </View>
-              </Panel>
+              <ContactOverview workspaceId={scope} contact={contact} />
+              <RelationshipGraph workspaceId={scope} contactId={contact.id} name={contact.displayName} />
               <Panel>
                 <Text style={styles.section}>Details</Text>
                 <Text style={styles.body}>{contact.cardNote || 'No card note.'}</Text>
@@ -142,6 +119,8 @@ export default function ContactProfile() {
               </Panel>
               <ImmichPhotos workspaceId={scope} contactId={contact.id} canWrite={canWrite} onAttachments={setPhotoLinks} onPhoto={load} />
               <ProfileCrm workspaceId={scope} contactId={contact.id} canWrite={canWrite} birthday={contact.birthday} followUpFrequency={contact.followUpFrequency} lastInteractionAt={contact.lastInteractionAt} />
+              <ContactHistory workspaceId={scope} contactId={contact.id} />
+              <ContactShare workspaceId={scope} contactId={contact.id} />
             </View>
           }
         />

@@ -46,6 +46,26 @@ export async function registerUser(
   })
 }
 
+export async function createOauthUser(db: Database, emailInput: string, displayName: string) {
+  const email = normalizeEmail(emailInput)
+  const passwordHash = await hashPassword(randomBytes(32).toString('base64url'))
+  return db.transaction(async (tx) => {
+    const database = tx as unknown as Database
+    const [user] = await database.insert(users).values({ email, passwordHash, displayName: displayName.trim() || email.split('@')[0] || 'User' }).returning()
+    if (!user) throw new AppError(500, 'Could not create the account')
+    const workspace = await createWorkspace(database, user.id, 'Personal')
+    await createAddressBook(database, user.id, workspace.id, 'Contacts')
+    return user
+  })
+}
+
+export async function openSession(db: Database, userId: string) {
+  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1)
+  if (!user) throw new AppError(404, 'Account not found')
+  const session = await createSession(db, userId)
+  return { user: publicUser(user), token: session.token, expiresAt: session.expiresAt }
+}
+
 export async function loginUser(db: Database, emailInput: string, password: string) {
   const email = normalizeEmail(emailInput)
   const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1)
